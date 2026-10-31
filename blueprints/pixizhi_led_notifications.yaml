@@ -1,0 +1,72 @@
+blueprint:
+  name: PixiZhi SpotPear - LED notification
+  description: >-
+    Flash the PixiZhi SpotPear's LED in a color of your choice when something happens.
+    The LED goes back to what it was doing afterwards.
+    Needs "Allow the device to perform Home Assistant actions" turned on in the
+    PixiZhi SpotPear's ESPHome device settings.
+  domain: automation
+  author: PixiZhi SpotPear contributors
+  input:
+    notify_trigger:
+      name: When
+      description: What should make the LED flash (doorbell, washer finished, ...).
+      selector:
+        trigger: {}
+    notify_conditions:
+      name: Only if (optional)
+      default: []
+      selector:
+        condition: {}
+    color:
+      name: Color
+      default: [0, 180, 255]
+      selector:
+        color_rgb: {}
+    flashes:
+      name: Number of flashes
+      default: "3"
+      selector:
+        select:
+          options:
+            - "1"
+            - "3"
+            - "5"
+    length:
+      name: Flash length
+      default: short
+      selector:
+        select:
+          options:
+            - short
+            - long
+    device_name:
+      name: ESPHome device name
+      description: The name from the firmware (name - substitution), dashes replaced by underscores.
+      default: pixizhi
+      selector:
+        text: {}
+
+mode: queued
+max: 5
+max_exceeded: silent
+
+variables:
+  node: !input device_name
+  rgb_in: !input color
+  flashes: !input flashes
+  length: !input length
+
+triggers: !input notify_trigger
+
+conditions: !input notify_conditions
+
+actions:
+  - action: "esphome.{{ node }}_flash_led"
+    data:
+      rgb: "{{ (rgb_in[0] | int) * 65536 + (rgb_in[1] | int) * 256 + (rgb_in[2] | int) }}"
+      count: "{{ flashes | int(1) }}"
+      on_ms: "{{ 150 if length == 'short' else 700 }}"
+      off_ms: "{{ 150 if length == 'short' else 350 }}"
+  - delay:
+      milliseconds: "{{ (flashes | int(1)) * (300 if length == 'short' else 1050) + 200 }}"

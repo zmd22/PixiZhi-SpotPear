@@ -1,0 +1,16 @@
+# Local credentials and ESPHome build state
+secrets.yaml
+secrets.*.yaml
+.esphome/
+.venv/
+__pycache__/
+*.pyc
+*.log
+*.bin
+*.elf
+# Private exports and archives do not belong in source control
+private/
+backups/
+configured/
+*.zip
+.DS_Store

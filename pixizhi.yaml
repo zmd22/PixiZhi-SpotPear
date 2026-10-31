@@ -1,0 +1,3566 @@
+# =============================================================================
+#  PixiZhi SpotPear 0.9.8 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
+#  Standby clock + up to 6 light / media player / thermostat screens picked in
+#  Home Assistant, pizza button screen, notification center, kitchen timer,
+#  pixel clock, Sendspin speaker, siren, LED notifications,
+#  USB host audio (Bluetooth disabled), screen + LED controls, battery, swipe sensors
+#  Hardware definitions based on RealDeco/xiaozhi-esphome (ball_v2_hw.yaml)
+# =============================================================================
+
+substitutions:
+  name: pixizhi
+  friendly_name: PixiZhi SpotPear
+  timezone: Etc/UTC
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  project:
+    name: pixizhi.spotpear
+    version: "0.9.8"
+  min_version: 2026.11.0-dev
+  name_add_mac_suffix: false
+  on_boot:
+    priority: -100
+    then:
+      - lambda: id(ui_ready) = true;
+      - script.execute: draw_wheel
+      - script.execute: update_clock
+      - script.execute: apply_standby_style
+      - script.execute: show_current
+      - script.execute: apply_audio_output
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# USB is reserved for host audio. View logs wirelessly, not through USB serial.
+logger:
+  level: INFO
+  hardware_uart: UART0
+  baud_rate: 0
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# Bluetooth proxy and BLE scanning are removed to free resources for USB audio.
+# The USB-C connection is now a host data port for an external USB DAC/speaker.
+usb_host:
+  enable_hubs: true
+
+# Keep the bundled components folder next to this YAML.
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [usb_audio]
+
+usb_audio:
+  id: usb_audio_bus
+
+http_request:
+  verify_ssl: false
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  on_client_connected:
+    - delay: 3s
+    - homeassistant.event:
+        event: esphome.pixizhi_refresh
+        data:
+          node: ${name}
+  actions:
+    - action: set_standby_music_options
+      variables:
+        enabled: bool
+      then:
+        - lambda: id(standby_music_enabled) = enabled;
+        - script.execute: update_clock
+        - script.execute: update_now_playing
+    - action: set_control_options
+      variables:
+        volume_limit: int
+        gesture_mode: int
+      then:
+        - lambda: |-
+            id(ui_volume_limit) = std::max(5, std::min(100, static_cast<int>(volume_limit)));
+            id(ui_gesture_mode) = std::max(0, std::min(3, static_cast<int>(gesture_mode)));
+            id(ui_last_sync) = millis();
+        - script.execute: ui_render
+    - action: set_slot_features
+      variables:
+        slot: int
+        step: float
+        features: int
+        white: bool
+        kelvin_min: int
+        kelvin_max: int
+        modes: string
+        presets: string
+        unit: string
+        sources: string
+        repeat: string
+        muted: bool
+        shuffle: bool
+      then:
+        - lambda: |-
+            if (slot < 0 || slot >= 6) return;
+            id(slot_step)[slot] = std::isfinite(step) && step > 0 ? step : 0.5f;
+            id(slot_features)[slot] = features;
+            id(slot_white)[slot] = white;
+            id(slot_kelvin_min)[slot] = kelvin_min;
+            id(slot_kelvin_max)[slot] = kelvin_max;
+            id(slot_modes)[slot] = modes;
+            id(slot_presets)[slot] = presets;
+            id(slot_unit)[slot] = unit;
+            id(slot_sources)[slot] = sources;
+            id(slot_repeat)[slot] = repeat;
+            id(slot_muted)[slot] = muted;
+            id(slot_shuffle)[slot] = shuffle;
+        - script.execute: ui_render
+    - action: set_status_detail
+      variables:
+        slot: int
+        value: string
+        target: string
+        priority: int
+      then:
+        - lambda: |-
+            if (slot < 0 || slot >= 6) return;
+            id(status_value)[slot] = value;
+            id(status_target)[slot] = target;
+            id(status_priority)[slot] = priority;
+        - script.execute: ui_render
+    - action: set_standby_climate
+      variables:
+        temperature: string
+        humidity: string
+      then:
+        - lambda: |-
+            id(desk_temp) = temperature;
+            id(desk_rh) = humidity;
+        - script.execute: update_clock
+    - action: set_standby_player
+      variables:
+        eid: string
+        state: string
+        title: string
+        artist: string
+      then:
+        - lambda: |-
+            id(standby_player) = eid;
+            id(standby_state) = state;
+            id(standby_title) = title;
+            id(standby_artist) = artist;
+        - script.execute: update_clock
+        - script.execute: update_now_playing
+    - action: set_standby_options
+      variables:
+        seconds: int
+        animate: bool
+      then:
+        - lambda: |-
+            const int interval_seconds = static_cast<int>(seconds);
+            id(status_seconds) = std::max(3, std::min(15, interval_seconds));
+            id(weather_animate) = animate;
+    - action: set_status
+      variables:
+        slot: int
+        label: string
+        icon: string
+        active: bool
+      then:
+        - lambda: |-
+            if (slot < 0 || slot >= 6) return;
+            id(status_labels)[slot] = label;
+            if (icon == "washer") {
+              id(status_icons)[slot] = "water";
+            } else {
+              id(status_icons)[slot] = icon;
+            }
+            id(status_active)[slot] = active;
+            id(ui_last_sync) = millis();
+        - script.execute: ui_render
+    - action: set_slot
+      variables:
+        slot: int
+        eid: string
+        label: string
+        state: string
+        dimmable: bool
+        brightness: int
+        color: int
+        color_capable: bool
+        title: string
+        artist: string
+        volume: float
+        picture: string
+        temp_now: float
+        temp_target: float
+        temp_min: float
+        temp_max: float
+        hvac_action: string
+        battery_low: bool
+      then:
+        - lambda: |-
+            if (slot < 0 || slot > 5) return;
+            if(id(slot_eid)[slot]!=eid){id(slot_pending)[slot]=0;id(slot_temp_due)[slot]=0;}
+            id(slot_eid)[slot] = eid;
+            id(slot_label)[slot] = label;
+            id(slot_state)[slot] = state;
+            id(slot_dimmable)[slot] = dimmable;
+            id(slot_bri)[slot] = brightness;
+            id(slot_color)[slot] = (uint32_t) color;
+            id(slot_color_capable)[slot] = color_capable;
+            id(slot_title)[slot] = title;
+            id(slot_artist)[slot] = artist;
+            id(slot_vol)[slot] = volume;
+            id(slot_pic)[slot] = picture;
+            id(slot_tnow)[slot] = temp_now;
+            id(slot_ttarget)[slot] = temp_target;
+            id(slot_tmin)[slot] = temp_min;
+            id(slot_tmax)[slot] = temp_max;
+            id(slot_action)[slot] = hvac_action;
+            id(slot_batt_low)[slot] = battery_low;
+            id(ui_last_sync) = millis();
+            id(slot_seen)[slot] = millis();
+            int k = id(slot_pending)[slot];
+            float expected = id(slot_expected)[slot];
+            bool ack = (k == 1 && ((expected > 0 && state == "on") || (expected == 0 && state == "off"))) ||
+                       (k == 2 && state == "on" && fabsf(brightness * 100.0f / 255.0f - expected) <= 2) ||
+                       (k == 3 && fabsf(volume * 100 - expected) <= 2) ||
+                       (k == 4 && fabsf(temp_target - expected) < 0.05f) ||
+                       (k == 5 && ((expected > 0 && state == "playing") || (expected == 0 && state != "playing"))) ||
+                       (k == 6 && ((expected > 0 && state != "off") || (expected == 0 && state == "off"))) ||
+                       (k == 7 && static_cast<int>(color) == static_cast<int>(expected));
+            if (ack && !id(slot_temp_due)[slot]) id(slot_pending)[slot] = 0;
+        - if:
+            condition:
+              lambda: return slot == id(cur_slot);
+            then:
+              - script.execute: fill_current
+            else:
+              - script.execute: update_hint
+        - script.execute: ui_render
+    - action: set_weather
+      variables:
+        temp: float
+        unit: string
+        condition: string
+      then:
+        - lambda: |-
+            static const std::map<std::string, const char *> icons = {
+              {"clear-night", "\U000F0594"}, {"cloudy", "\U000F0590"},
+              {"exceptional", "\U000F05D6"}, {"fog", "\U000F0591"},
+              {"hail", "\U000F0592"}, {"lightning", "\U000F0593"},
+              {"lightning-rainy", "\U000F067E"}, {"partlycloudy", "\U000F0595"},
+              {"pouring", "\U000F0596"}, {"rainy", "\U000F0597"},
+              {"snowy", "\U000F0598"}, {"snowy-rainy", "\U000F067F"},
+              {"sunny", "\U000F0599"}, {"windy", "\U000F059D"},
+              {"windy-variant", "\U000F059E"}};
+            auto it = icons.find(condition);
+            id(w_ok) = !(it == icons.end() || std::isnan(temp));
+            id(w_cond) = condition;
+            id(w_temp) = temp;
+
+        - script.execute: apply_standby_style
+    - action: set_pizza
+      variables:
+        slice: int
+        label: string
+        icon: string
+      then:
+        - lambda: |-
+            if (slice < 1 || slice > 4) return;
+            id(pizza_labels)[slice-1] = label;
+            id(pizza_keys)[slice-1] = icon;
+            id(ui_render).execute();
+    - action: notify
+      variables:
+        title: string
+        message: string
+        icon: string
+        color: int
+        urgent: bool
+      then:
+        - lambda: |-
+            if (id(nq_title).size() >= 5) {
+              // queue full: drop the oldest normal one (or the oldest if all urgent)
+              size_t k = 0;
+              for (size_t i = 0; i < id(nq_title).size(); i++) if (!id(nq_urgent)[i]) { k = i; break; }
+              id(nq_title).erase(id(nq_title).begin() + k);
+              id(nq_msg).erase(id(nq_msg).begin() + k);
+              id(nq_icon).erase(id(nq_icon).begin() + k);
+              id(nq_color).erase(id(nq_color).begin() + k);
+              id(nq_urgent).erase(id(nq_urgent).begin() + k);
+              id(nq_time).erase(id(nq_time).begin() + k);
+            }
+            auto now = id(ha_time).now();
+            std::string tm = now.is_valid() ? now.strftime("%H:%M") : std::string("");
+            // urgent ones go to the front of the queue
+            size_t pos = urgent ? 0 : id(nq_title).size();
+            id(nq_title).insert(id(nq_title).begin() + pos, title);
+            id(nq_msg).insert(id(nq_msg).begin() + pos, message);
+            id(nq_icon).insert(id(nq_icon).begin() + pos, icon);
+            id(nq_color).insert(id(nq_color).begin() + pos, (uint32_t) color);
+            id(nq_urgent).insert(id(nq_urgent).begin() + pos, urgent);
+            id(nq_time).insert(id(nq_time).begin() + pos, tm);
+        - script.execute: update_badge
+        - script.execute: notif_led
+        - if:
+            condition:
+              lambda: return id(overlay) == 1;
+            then:
+              - script.execute: notif_fill
+        - if:
+            condition:
+              lambda: return urgent;
+            then:
+              - script.execute: urgent_loop
+            else:
+              - if:
+                  condition:
+                    lambda: return id(overlay) == 1;
+                  then:
+                    - script.execute: notif_fill
+    - action: clear_notifications
+      then:
+        - lambda: |-
+            id(nq_title).clear(); id(nq_msg).clear(); id(nq_icon).clear();
+            id(nq_color).clear(); id(nq_urgent).clear(); id(nq_time).clear();
+        - script.stop: urgent_loop
+        - script.execute: notif_closed
+    - action: flash_led
+      variables:
+        rgb: int
+        count: int
+        on_ms: int
+        off_ms: int
+      then:
+        - script.execute:
+            id: flash_led
+            rgb: !lambda return rgb;
+            count: !lambda return count;
+            on_ms: !lambda return on_ms;
+            off_ms: !lambda return off_ms;
+    - action: clear_slot
+      variables:
+        slot: int
+      then:
+        - lambda: |-
+            if (slot < 0 || slot > 5) return;
+            id(slot_eid)[slot] = "";
+            id(slot_pic)[slot] = "";
+            id(slot_pending)[slot] = 0;
+            id(slot_temp_due)[slot] = 0;
+            id(slot_seen)[slot] = 0;
+        - if:
+            condition:
+              lambda: return slot == id(cur_slot);
+            then:
+              - lambda: id(cur_slot) = -1;
+              - script.execute: show_current
+            else:
+              - script.execute: update_hint
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    timezone: ${timezone}
+    on_time_sync:
+      - script.execute: update_clock
+    on_time:
+      - seconds: 0
+        then:
+          - script.execute: update_clock
+
+# --- SLOT DATA (filled by the Home Assistant blueprint) ----------------------
+globals:
+  - id: night_active
+    type: bool
+    initial_value: 'false'
+  - id: clock_brightness_until
+    type: uint32_t
+    initial_value: '0'
+  - id: notification_line
+    type: int
+    initial_value: '0'
+  - id: pizza_labels
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>{"ACTION 1","ACTION 2","ACTION 3","ACTION 4"}'
+  - id: pizza_keys
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(4,"star")'
+  - id: sendspin_pairing_visible
+    type: bool
+    initial_value: 'false'
+  - id: audio_display_paused
+    type: bool
+    initial_value: 'false'
+  - id: standby_music_enabled
+    type: bool
+    initial_value: 'true'
+  - id: ui_frame_dirty
+    type: bool
+    initial_value: 'false'
+  - id: clock_frame_dirty
+    type: bool
+    initial_value: 'false'
+  - id: status_priority
+    type: std::vector<int>
+    initial_value: 'std::vector<int>(6, 0)'
+  - id: slot_sources
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(6, "")'
+  - id: slot_repeat
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(6, "off")'
+  - id: slot_muted
+    type: std::vector<bool>
+    initial_value: 'std::vector<bool>(6, false)'
+  - id: slot_shuffle
+    type: std::vector<bool>
+    initial_value: 'std::vector<bool>(6, false)'
+  - id: slot_temp_due
+    type: std::vector<uint32_t>
+    initial_value: 'std::vector<uint32_t>(6, 0)'
+  - id: ui_view
+    type: int
+    initial_value: '0'
+  - id: ui_category
+    type: int
+    initial_value: '0'
+  - id: ui_list_offset
+    type: int
+    initial_value: '0'
+  - id: ui_status_detail
+    type: int
+    initial_value: '-1'
+  - id: ui_touch_view
+    type: int
+    initial_value: '0'
+  - id: ui_touch_slot
+    type: int
+    initial_value: '-1'
+  - id: ui_touch_overlay
+    type: int
+    initial_value: '0'
+  - id: ui_wake_only
+    type: bool
+    initial_value: 'false'
+  - id: ui_dial_value
+    type: float
+    initial_value: '0'
+  - id: ui_dial_base
+    type: float
+    initial_value: '0'
+  - id: ui_volume_limit
+    type: int
+    initial_value: '65'
+  - id: ui_gesture_mode
+    type: int
+    initial_value: '0'
+  - id: ui_last_sync
+    type: uint32_t
+    initial_value: '0'
+  - id: ui_scroll_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: ui_scroll_tick
+    type: int
+    initial_value: '-1'
+  - id: ui_message
+    type: std::string
+    initial_value: '""'
+  - id: ui_message_until
+    type: uint32_t
+    initial_value: '0'
+  - id: slot_step
+    type: std::vector<float>
+    initial_value: 'std::vector<float>(6, 0.5f)'
+  - id: slot_features
+    type: std::vector<int>
+    initial_value: 'std::vector<int>(6, 0)'
+  - id: slot_kelvin_min
+    type: std::vector<int>
+    initial_value: 'std::vector<int>(6, 2000)'
+  - id: slot_kelvin_max
+    type: std::vector<int>
+    initial_value: 'std::vector<int>(6, 6500)'
+  - id: slot_white
+    type: std::vector<bool>
+    initial_value: 'std::vector<bool>(6, false)'
+  - id: slot_modes
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(6, "")'
+  - id: slot_presets
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(6, "")'
+  - id: slot_unit
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(6, "C")'
+  - id: slot_pending
+    type: std::vector<int>
+    initial_value: 'std::vector<int>(6, 0)'
+  - id: slot_expected
+    type: std::vector<float>
+    initial_value: 'std::vector<float>(6, 0)'
+  - id: slot_command_ms
+    type: std::vector<uint32_t>
+    initial_value: 'std::vector<uint32_t>(6, 0)'
+  - id: slot_seen
+    type: std::vector<uint32_t>
+    initial_value: 'std::vector<uint32_t>(6, 0)'
+  - id: status_value
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(6, "")'
+  - id: status_target
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(6, "")'
+  - id: desk_temp
+    type: std::string
+    initial_value: '""'
+  - id: desk_rh
+    type: std::string
+    initial_value: '""'
+  - id: status_labels
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(6)'
+  - id: status_icons
+    type: std::vector<std::string>
+    initial_value: 'std::vector<std::string>(6)'
+  - id: status_active
+    type: std::vector<bool>
+    initial_value: 'std::vector<bool>(6, false)'
+  - id: status_row
+    type: int
+    initial_value: '-1'
+  - id: status_seconds
+    type: int
+    initial_value: '5'
+  - id: status_last_ms
+    type: uint32_t
+    initial_value: '0'
+  - id: weather_animate
+    type: bool
+    initial_value: 'true'
+  - id: weather_frame
+    type: int
+    initial_value: '0'
+  - id: standby_player
+    type: std::string
+    initial_value: '""'
+  - id: standby_state
+    type: std::string
+    initial_value: '""'
+  - id: standby_title
+    type: std::string
+    initial_value: '""'
+  - id: standby_artist
+    type: std::string
+    initial_value: '""'
+  - id: cur_slot
+    type: int
+    initial_value: "-1"
+  - id: slot_eid
+    type: std::vector<std::string>
+    initial_value: std::vector<std::string>(6)
+  - id: slot_label
+    type: std::vector<std::string>
+    initial_value: std::vector<std::string>(6)
+  - id: slot_state
+    type: std::vector<std::string>
+    initial_value: std::vector<std::string>(6)
+  - id: slot_title
+    type: std::vector<std::string>
+    initial_value: std::vector<std::string>(6)
+  - id: slot_artist
+    type: std::vector<std::string>
+    initial_value: std::vector<std::string>(6)
+  - id: slot_pic
+    type: std::vector<std::string>
+    initial_value: std::vector<std::string>(6)
+  - id: slot_dimmable
+    type: std::vector<bool>
+    initial_value: std::vector<bool>(6, false)
+  - id: slot_color_capable
+    type: std::vector<bool>
+    initial_value: std::vector<bool>(6, false)
+  - id: slot_bri
+    type: std::vector<int>
+    initial_value: std::vector<int>(6, 0)
+  - id: slot_color
+    type: std::vector<uint32_t>
+    initial_value: std::vector<uint32_t>(6, 0xFFC878)
+  - id: slot_vol
+    type: std::vector<float>
+    initial_value: std::vector<float>(6, 0.0f)
+  - id: slot_tnow
+    type: std::vector<float>
+    initial_value: std::vector<float>(6, 0.0f)
+  - id: slot_ttarget
+    type: std::vector<float>
+    initial_value: std::vector<float>(6, 0.0f)
+  - id: slot_tmin
+    type: std::vector<float>
+    initial_value: std::vector<float>(6, 5.0f)
+  - id: slot_tmax
+    type: std::vector<float>
+    initial_value: std::vector<float>(6, 30.0f)
+  - id: slot_action
+    type: std::vector<std::string>
+    initial_value: std::vector<std::string>(6)
+  - id: slot_batt_low
+    type: std::vector<bool>
+    initial_value: std::vector<bool>(6, false)
+  - id: pizza_sel
+    type: int
+    initial_value: "-1"
+  - id: led_saved
+    type: light::LightColorValues
+  - id: led_flashing
+    type: bool
+    initial_value: "false"
+  - id: overlay
+    type: int
+    initial_value: "0"
+  - id: w_ok
+    type: bool
+    initial_value: "false"
+  - id: w_cond
+    type: std::string
+    initial_value: '""'
+  - id: w_temp
+    type: float
+    initial_value: "0"
+  - id: nq_title
+    type: std::vector<std::string>
+  - id: nq_msg
+    type: std::vector<std::string>
+  - id: nq_icon
+    type: std::vector<std::string>
+  - id: nq_color
+    type: std::vector<uint32_t>
+  - id: nq_urgent
+    type: std::vector<bool>
+  - id: nq_time
+    type: std::vector<std::string>
+  - id: notif_led_on
+    type: bool
+    initial_value: "false"
+  - id: pulse_phase
+    type: bool
+    initial_value: "false"
+  - id: timer_set_min
+    type: int
+    restore_value: true
+    initial_value: "5"
+  - id: timer_left
+    type: int
+    initial_value: "300"
+  - id: timer_running
+    type: bool
+    initial_value: "false"
+  - id: timer_done
+    type: bool
+    initial_value: "false"
+  - id: icon_map
+    type: std::map<std::string, const char *>
+    initial_value: |-
+      {
+        {"lightbulb", "\U000F0335"}, {"power", "\U000F0425"}, {"movie", "\U000F0FCE"},
+        {"night", "\U000F0594"}, {"bed", "\U000F02E3"}, {"sofa", "\U000F04B9"},
+        {"vacuum", "\U000F070D"}, {"fan", "\U000F0210"}, {"tv", "\U000F0502"},
+        {"music", "\U000F075A"}, {"lock", "\U000F033E"}, {"garage", "\U000F06D9"},
+        {"home", "\U000F02DC"}, {"fire", "\U000F0238"}, {"coffee", "\U000F0176"},
+        {"star", "\U000F04CE"}, {"bell", "\U000F009A"}, {"door", "\U000F081A"},
+        {"window", "\U000F05B1"}, {"washer", "\U000F072A"}, {"package", "\U000F03D7"},
+        {"battery", "\U000F0083"}, {"alert", "\U000F0026"}, {"info", "\U000F02FC"},
+        {"check", "\U000F05E0"}, {"water", "\U000F058C"}, {"mail", "\U000F06EE"},
+        {"timer", "\U000F051B"}
+      }
+  - id: siren_prev_volume
+    type: float
+    initial_value: "0.5"
+  - id: ui_ready
+    type: bool
+    initial_value: "false"
+  - id: is_night
+    type: std::function<bool()>
+    initial_value: |-
+      []() -> bool {
+        if (!id(night_mode).state) return false;
+        auto now = id(ha_time).now();
+        if (!now.is_valid()) return false;
+        int n = now.hour * 3600 + now.minute * 60 + now.second;
+        int a = id(night_start).hour * 3600 + id(night_start).minute * 60 + id(night_start).second;
+        int b = id(night_end).hour * 3600 + id(night_end).minute * 60 + id(night_end).second;
+        if (a == b) return false;
+        return (a < b) ? (n >= a && n < b) : (n >= a || n < b);
+      }
+  - id: wheel_rgb
+    type: int
+    initial_value: "0xFFFFFF"
+  - id: loaded_pic
+    type: std::string
+    initial_value: '""'
+  - id: bl_requested
+    type: float
+    initial_value: "1.0"
+  - id: bl_dimmed
+    type: bool
+    initial_value: "false"
+  - id: gs_ring_candidate
+    type: bool
+    initial_value: "false"
+  - id: gs_rotating
+    type: bool
+    initial_value: "false"
+  - id: gs_angle
+    type: float
+    initial_value: "0"
+  - id: gs_turn
+    type: float
+    initial_value: "0"
+  - id: gs_target_brightness
+    type: float
+    initial_value: "1.0"
+  - id: gs_base_brightness
+    type: float
+    initial_value: "1.0"
+  - id: gs_last_apply
+    type: uint32_t
+    initial_value: "0"
+  - id: gs_max_move
+    type: int
+    initial_value: "0"
+  - id: gs_touch_id
+    type: int
+    initial_value: "-1"
+  # swipe detector
+  - id: gs_clock_origin
+    type: bool
+    initial_value: "false"
+  - id: gs_touch_active
+    type: bool
+    initial_value: "false"
+  - id: gs_start_x
+    type: int
+    initial_value: "0"
+  - id: gs_start_y
+    type: int
+    initial_value: "0"
+  - id: gs_last_x
+    type: int
+    initial_value: "0"
+  - id: gs_last_y
+    type: int
+    initial_value: "0"
+  - id: gs_start_ms
+    type: uint32_t
+    initial_value: "0"
+
+# --- BUSES --------------------------------------------------------------------
+i2c:
+  - id: bus_a
+    sda: 15
+    scl: 14
+    scan: false
+  - id: bus_b
+    sda: 11
+    scl: 7
+    scan: false
+
+spi:
+  - id: spi_bus
+    clk_pin: GPIO4
+    mosi_pin: GPIO2
+
+# --- AUDIO / SENDSPIN: runtime internal/USB output selection -------------------
+i2s_audio:
+  - id: i2s_audio_bus
+    i2s_lrclk_pin: GPIO45
+    i2s_bclk_pin: GPIO9
+    i2s_mclk_pin: GPIO16
+
+audio_dac:
+  - platform: es8311
+    i2c_id: bus_a
+    id: es8311_dac
+    bits_per_sample: 16bit
+    sample_rate: 48000
+
+speaker:
+  - platform: i2s_audio
+    id: internal_speaker
+    i2s_audio_id: i2s_audio_bus
+    i2s_dout_pin: GPIO8
+    dac_type: external
+    audio_dac: es8311_dac
+    sample_rate: 48000
+    bits_per_sample: 16bit
+    channel: stereo
+    buffer_duration: 100ms
+  - platform: usb_audio
+    id: usb_speaker
+    software_volume: true
+    usb_audio_id: usb_audio_bus
+    sample_rate: 48000
+    bits_per_sample: 16bit
+    num_channels: 2
+    buffer_size: 6400
+  - platform: router
+    id: box_speaker
+    output_speakers:
+      - internal_speaker
+      - usb_speaker
+    sample_rate: 48000
+    bits_per_sample: 16
+    num_channels: 2
+
+  # Normalize channels and sample width before the fixed-format output router.
+  # Two real inputs serve media playback and independent HA announcements.
+  - platform: mixer
+    id: playback_mixer
+    output_speaker: box_speaker
+    num_channels: 2
+    bits_per_sample: 16
+    source_speakers:
+      - id: media_mixer_input
+        sample_rate: 48000
+        num_channels: 2
+        bits_per_sample: 16
+        buffer_duration: 100ms
+      - id: announcement_mixer_input
+        sample_rate: 48000
+        num_channels: 2
+        bits_per_sample: 16
+        buffer_duration: 100ms
+  # Resamplers normalize rate/width; the mixer above handles channel conversion.
+  - platform: resampler
+    id: media_resampler
+    output_speaker: media_mixer_input
+    sample_rate: 48000
+    bits_per_sample: 16
+    buffer_duration: 100ms
+  - platform: resampler
+    id: announcement_resampler
+    output_speaker: announcement_mixer_input
+    sample_rate: 48000
+    bits_per_sample: 16
+    buffer_duration: 100ms
+
+sendspin:
+  id: sendspin_hub
+  # Encrypted connections alone do not restrict which servers may play.
+  unpaired_access: false
+  on_display_pairing_code:
+    - lambda: |-
+        lv_label_set_text(id(pairing_heading), "SENDSPIN PAIR");
+        lv_label_set_text(id(pairing_digits), code.c_str());
+        lv_label_set_text(id(pairing_hint), "Enter in Music Assistant");
+        id(sendspin_pairing_visible) = true;
+        id(gs_touch_active) = false;
+        id(gs_ring_candidate) = false;
+        lv_obj_clear_flag(id(pairing_card), LV_OBJ_FLAG_HIDDEN);
+        id(lvgl_comp).set_paused(false, false);
+        id(bl_dimmed) = false;
+        id(apply_backlight).execute();
+  on_clear_pairing_code:
+    - lambda: |-
+        lv_label_set_text(id(pairing_digits), "");
+        lv_obj_add_flag(id(pairing_card), LV_OBJ_FLAG_HIDDEN);
+        id(sendspin_pairing_visible) = false;
+  on_open_pairing_window:
+    - lambda: |-
+        lv_label_set_text(id(pairing_heading), "PAIRING WAITING");
+        lv_label_set_text(id(pairing_digits), "ALLOW?");
+        lv_label_set_text(id(pairing_hint), "Tap ALLOW to retry pairing");
+        id(sendspin_pairing_visible) = true;
+        id(gs_touch_active) = false;
+        id(gs_ring_candidate) = false;
+        lv_obj_clear_flag(id(pairing_card), LV_OBJ_FLAG_HIDDEN);
+        id(lvgl_comp).set_paused(false, false);
+        id(bl_dimmed) = false;
+        id(apply_backlight).execute();
+  on_close_pairing_window:
+    - lambda: |-
+        lv_obj_add_flag(id(pairing_card), LV_OBJ_FLAG_HIDDEN);
+        id(sendspin_pairing_visible) = false;
+  on_pairing_succeeded:
+    - logger.log: "Sendspin server paired; trusted access saved"
+  on_pairing_failed:
+    - logger.log:
+        level: WARN
+        format: "Sendspin pairing failed: %s"
+        args: [reason.c_str()]
+
+# Siren sound, baked into the firmware. Replace the file with any WAV/MP3/FLAC
+# of your own (same name), or point "file:" at a URL, then reinstall.
+audio_file:
+  - id: siren_sound
+    file: sounds/alarm.wav
+  - id: chime_sound
+    file: sounds/chime.wav
+
+media_source:
+  - platform: sendspin
+    id: sendspin_source
+  - platform: audio_file
+    id: file_source
+  - platform: audio_file
+    id: announcement_file_source
+
+media_player:
+  - platform: speaker_source
+    id: ball_media_player
+    name: None
+    media_pipeline:
+      speaker: media_resampler
+      sources:
+        - sendspin_source
+        - file_source
+    announcement_pipeline:
+      speaker: announcement_resampler
+      sources:
+        - announcement_file_source
+    on_state:
+      - script.execute: audio_display_policy
+      - script.execute: update_now_playing
+
+text_sensor:
+  - platform: sendspin
+    id: sendspin_pairing_code
+    name: Sendspin Pairing Code
+    type: pairing_code
+    entity_category: diagnostic
+  - platform: sendspin
+    id: np_title
+    type: title
+    internal: true
+    on_value:
+      - script.execute: update_now_playing
+  - platform: sendspin
+    id: np_artist
+    type: artist
+    internal: true
+    on_value:
+      - script.execute: update_now_playing
+
+switch:
+  # Diagnostic only: the display freezes while local audio is active.
+  - platform: template
+    id: pause_display_during_audio
+    name: Pause Display During Audio
+    icon: mdi:monitor-pause
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - script.execute: audio_display_policy
+    on_turn_off:
+      - script.execute: audio_display_policy
+  - platform: template
+    id: usb_audio_fallback
+    name: USB Audio Fallback
+    icon: mdi:speaker-wireless
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    id: night_mode
+    name: Night Mode
+    icon: mdi:weather-night
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - script.execute: apply_standby_style
+    on_turn_off:
+      - script.execute: apply_standby_style
+  - platform: template
+    id: show_pizza
+    name: Show Pizza Screen
+    icon: mdi:pizza
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    id: siren
+    name: Siren
+    icon: mdi:alarm-light
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - lambda: id(siren_prev_volume) = id(ball_media_player).volume;
+      - media_player.stop: ball_media_player
+      - delay: 300ms
+      - media_player.volume_set:
+          id: ball_media_player
+          volume: 100%
+      - media_player.repeat_one: ball_media_player
+      - media_player.play_media:
+          id: ball_media_player
+          media_url: "audio-file://siren_sound"
+      - light.turn_on:
+          id: led
+          brightness: 100%
+          red: 100%
+          green: 0%
+          blue: 0%
+          effect: Fast Pulse
+      - script.execute: siren_timeout
+    turn_off_action:
+      - script.stop: siren_timeout
+      - media_player.stop: ball_media_player
+      - media_player.repeat_off: ball_media_player
+      - media_player.volume_set:
+          id: ball_media_player
+          volume: !lambda return id(siren_prev_volume);
+      - light.turn_off: led
+  # The audio-output selector manages the internal speaker amplifier.
+  - platform: gpio
+    id: speaker_enable
+    internal: true
+    pin: GPIO46
+    restore_mode: ALWAYS_OFF
+
+# --- SCREEN BACKLIGHT + RGB LED -----------------------------------------------
+output:
+  - platform: ledc
+    pin: 42
+    id: backlight_pwm
+    inverted: true
+  - platform: template
+    id: backlight_output
+    type: float
+    write_action:
+      - lambda: |-
+          id(bl_requested) = state;
+          id(apply_backlight).execute();
+
+light:
+  - platform: monochromatic
+    id: screen_light
+    name: Screen
+    icon: mdi:television
+    entity_category: config
+    output: backlight_output
+    restore_mode: ALWAYS_ON
+    default_transition_length: 250ms
+
+  - platform: esp32_rmt_led_strip
+    id: led
+    name: LED
+    entity_category: config
+    pin: GPIO48
+    default_transition_length: 0s
+    chipset: WS2812
+    num_leds: 1
+    rgb_order: GRB
+    effects:
+      - pulse:
+          name: Slow Pulse
+          transition_length: 250ms
+          update_interval: 250ms
+          min_brightness: 50%
+          max_brightness: 100%
+      - pulse:
+          name: Fast Pulse
+          transition_length: 100ms
+          update_interval: 100ms
+          min_brightness: 50%
+          max_brightness: 100%
+
+select:
+  - platform: template
+    id: audio_output
+    name: Audio Output
+    icon: mdi:speaker-multiple
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_option: Internal speaker
+    options:
+      - Internal speaker
+      - USB DAC
+    on_value:
+      - if:
+          condition:
+            lambda: return id(ui_ready);
+          then:
+            - script.execute: apply_audio_output
+  - platform: template
+    id: clock_color
+    name: Clock Color
+    icon: mdi:palette
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    options:
+      - "Red"
+      - "Green"
+      - "Amber"
+      - "Cyan"
+    initial_option: "Amber"
+    on_value:
+      - script.execute: apply_standby_style
+      - script.execute: ui_render
+  - platform: template
+    id: longpress_mode
+    name: Standby Long-press
+    icon: mdi:gesture-tap-hold
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    options:
+      - "HA action"
+      - "Timer"
+    initial_option: "HA action"
+
+datetime:
+  - platform: template
+    id: night_start
+    type: time
+    name: Night Starts
+    icon: mdi:weather-sunset-down
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: "22:00:00"
+    on_value:
+      - script.execute: apply_standby_style
+  - platform: template
+    id: night_end
+    type: time
+    name: Night Ends
+    icon: mdi:weather-sunset-up
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    initial_value: "07:00:00"
+    on_value:
+      - script.execute: apply_standby_style
+
+number:
+  - platform: template
+    id: night_brightness
+    name: Night Mode Brightness
+    icon: mdi:brightness-4
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 1
+    max_value: 100
+    step: 1
+    initial_value: 10
+    optimistic: true
+    restore_value: true
+    on_value:
+      - script.execute: apply_backlight
+  - platform: template
+    id: siren_max_duration
+    name: Siren Max Duration
+    icon: mdi:timer-alert-outline
+    entity_category: config
+    unit_of_measurement: s
+    optimistic: true
+    restore_value: true
+    initial_value: 120
+    min_value: 10
+    max_value: 900
+    step: 10
+    mode: box
+  - platform: template
+    id: longpress_brightness
+    name: Long-press Brightness
+    icon: mdi:gesture-tap-hold
+    entity_category: config
+    unit_of_measurement: "%"
+    optimistic: true
+    restore_value: true
+    initial_value: 100
+    min_value: 5
+    max_value: 100
+    step: 5
+    mode: slider
+  - platform: template
+    id: screen_timeout
+    name: Standby After
+    icon: mdi:timer-outline
+    entity_category: config
+    unit_of_measurement: s
+    optimistic: true
+    restore_value: true
+    initial_value: 20
+    min_value: 5
+    max_value: 600
+    step: 5
+    mode: box
+  - platform: template
+    id: standby_brightness
+    name: Standby Brightness
+    icon: mdi:brightness-4
+    entity_category: config
+    unit_of_measurement: "%"
+    optimistic: true
+    restore_value: true
+    initial_value: 20
+    min_value: 0
+    max_value: 100
+    step: 5
+    mode: slider
+    on_value:
+      - script.execute: apply_backlight
+
+button:
+  - platform: template
+    name: Sendspin Allow Pairing Retry
+    icon: mdi:shield-key
+    entity_category: config
+    on_press:
+      - sendspin.confirm_pairing_window: sendspin_hub
+  - platform: template
+    name: Audio Output Test
+    icon: mdi:speaker-play
+    on_press:
+      - media_player.stop: ball_media_player
+      - media_player.volume_set:
+          id: ball_media_player
+          volume: 20%
+      - media_player.play_media:
+          id: ball_media_player
+          media_url: "audio-file://chime_sound"
+          announcement: true
+
+  - platform: restart
+    name: Restart
+    entity_category: config
+
+# --- BATTERY + SWIPE SENSORS --------------------------------------------------
+sensor:
+  - platform: adc
+    pin: GPIO1
+    name: Battery Voltage
+    id: battery_voltage
+    attenuation: 12db
+    accuracy_decimals: 2
+    update_interval: 10s
+    unit_of_measurement: V
+    icon: mdi:battery-medium
+    entity_category: diagnostic
+    filters:
+      - multiply: 2.0
+      - median:
+          window_size: 7
+          send_every: 7
+          send_first_at: 1
+      - throttle: 1min
+    on_value:
+      - sensor.template.publish:
+          id: battery_percentage
+          state: !lambda return x;
+
+  - platform: template
+    id: battery_percentage
+    name: Battery
+    device_class: battery
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: never
+    filters:
+      - calibrate_linear:
+          method: exact
+          datapoints:
+            - 2.80 -> 0.0
+            - 3.10 -> 10.0
+            - 3.30 -> 20.0
+            - 3.45 -> 30.0
+            - 3.60 -> 40.0
+            - 3.70 -> 50.0
+            - 3.75 -> 60.0
+            - 3.80 -> 70.0
+            - 3.90 -> 80.0
+            - 4.00 -> 90.0
+            - 4.20 -> 100.0
+      - clamp:
+          min_value: 0
+          max_value: 100
+
+binary_sensor:
+  - platform: template
+    id: swipe_left
+    name: Swipe Left
+    icon: mdi:gesture-swipe-left
+  - platform: template
+    id: swipe_right
+    name: Swipe Right
+    icon: mdi:gesture-swipe-right
+  - platform: template
+    id: swipe_up
+    name: Swipe Up
+    icon: mdi:gesture-swipe-up
+  - platform: template
+    id: swipe_down
+    name: Swipe Down
+    icon: mdi:gesture-swipe-down
+
+# --- TOUCH ----------------------------------------------------------------------
+touchscreen:
+  - platform: cst816
+    id: my_touchscreen
+    interrupt_pin: GPIO12
+    reset_pin: GPIO6
+    display: main_display
+    i2c_id: bus_b
+    on_touch:
+      - lambda: |-
+          if (id(sendspin_pairing_visible)) return;
+          id(gs_touch_active)=true;
+          id(ui_touch_view)=id(ui_view);id(ui_touch_slot)=id(cur_slot);id(ui_touch_overlay)=id(overlay);
+          id(gs_clock_origin)=id(overlay)==0 && id(ui_view)==0 && id(cur_slot)<0;
+          id(ui_wake_only)=id(bl_dimmed);
+          id(gs_start_x)=touch.x;id(gs_start_y)=touch.y;id(gs_last_x)=touch.x;id(gs_last_y)=touch.y;
+          id(gs_start_ms)=millis();id(gs_touch_id)=touch.id;id(gs_max_move)=0;
+          float rx=touch.x-120.0f,ry=touch.y-120.0f;
+          bool dial=id(gs_clock_origin);
+          int s=id(cur_slot);
+          if(id(ui_view)==2 && s>=0 && s<6 && id(slot_seen)[s]!=0 && (uint32_t)(millis()-id(slot_seen)[s])<45000 &&
+             id(slot_state)[s]!="unknown" && id(slot_state)[s]!="unavailable") {
+            auto &e=id(slot_eid)[s];bool music=e.rfind("media_player.",0)==0,climate=e.rfind("climate.",0)==0;
+            dial=(music&&(id(slot_features)[s]&4)) || (climate&&(id(slot_features)[s]&1)) || id(slot_dimmable)[s];
+            id(ui_dial_base)=music?id(slot_vol)[s]*100:climate?id(slot_ttarget)[s]:id(slot_bri)[s]*100.0f/255;
+            int k=id(slot_pending)[s];if(k==2||k==3||k==4)id(ui_dial_base)=id(slot_expected)[s];
+            id(ui_dial_value)=id(ui_dial_base);
+          }
+          // Bottom gap is reserved for navigation and large buttons, not dial capture.
+          id(gs_ring_candidate)=!id(ui_wake_only)&&id(overlay)==0&&dial&&rx*rx+ry*ry>=94.0f*94.0f&&!(touch.y>185&&touch.x>70&&touch.x<170);
+          id(gs_rotating)=false;id(gs_turn)=0;id(gs_angle)=atan2f(ry,rx);id(gs_last_apply)=0;
+          id(gs_base_brightness)=id(is_night)()?id(night_brightness).state/100.0f:id(screen_light).remote_values.get_brightness();id(gs_target_brightness)=id(gs_base_brightness);
+          if(id(bl_dimmed)){id(bl_dimmed)=false;id(apply_backlight).execute();}
+    on_update:
+      - lambda: |-
+          if (id(sendspin_pairing_visible)) { id(gs_touch_active)=false; return; }
+          if(!id(gs_touch_active))return;
+          for(auto &t:touches)if(t.id==id(gs_touch_id)&&t.state>=1&&t.state<=2){
+            id(gs_last_x)=t.x;id(gs_last_y)=t.y;
+            id(gs_max_move)=std::max(id(gs_max_move),std::max(std::abs((int)t.x-id(gs_start_x)),std::abs((int)t.y-id(gs_start_y))));
+            if(id(ui_wake_only)||id(ui_touch_view)!=id(ui_view)||id(ui_touch_slot)!=id(cur_slot)||id(ui_touch_overlay)!=id(overlay)){id(gs_ring_candidate)=false;break;}
+            if(id(gs_ring_candidate)){
+              float rx=t.x-120.0f,ry=t.y-120.0f;
+              if(rx*rx+ry*ry<83.0f*83.0f){id(gs_ring_candidate)=false;break;}
+              float angle=atan2f(ry,rx),delta=angle-id(gs_angle);
+              if(delta>3.14159265f)delta-=6.2831853f;if(delta< -3.14159265f)delta+=6.2831853f;
+              id(gs_angle)=angle;
+              if(fabsf(delta)>0.7853982f){id(gs_ring_candidate)=false;break;}
+              id(gs_turn)+=delta;
+              if(fabsf(id(gs_turn))>=0.174533f)id(gs_rotating)=true;
+              if(id(gs_rotating)&&(uint32_t)(millis()-id(gs_last_apply))>=50){id(gs_last_apply)=millis();
+                if(id(gs_clock_origin))id(clock_brightness_apply).execute();else id(ui_dial_apply).execute();}
+            }break;
+          }
+    on_release:
+      - lambda: |-
+          if (id(sendspin_pairing_visible)) { id(gs_touch_active)=false; return; }
+          if(!id(gs_touch_active))return;
+          id(gs_touch_active)=false;
+          if(id(ui_wake_only))return;
+          if(id(ui_touch_view)!=id(ui_view)||id(ui_touch_slot)!=id(cur_slot)||id(ui_touch_overlay)!=id(overlay))return;
+          if(id(gs_rotating)){
+            if(id(gs_clock_origin)){id(clock_brightness_apply).execute();id(report_clock_rotation).execute();}
+            else{id(ui_dial_apply).execute();id(ui_dial_commit).execute();}return;
+          }
+          const int px=id(gs_last_x), py=id(gs_last_y);
+          const int dx0=px-id(gs_start_x),dy0=py-id(gs_start_y);
+          const uint32_t held_ms=millis()-id(gs_start_ms);
+          if(id(overlay)==1) {
+            if(std::abs(dy0)>=30) {id(notification_line)=std::max(0,id(notification_line)+(dy0<0?2:-2));id(ui_render).execute();}
+            else if(id(gs_max_move)<=16) id(notif_dismiss).execute(held_ms>=1000);
+            return;
+          }
+          if(id(overlay)==2) {
+            if(id(gs_max_move)>16)return;
+            if(py>207){id(ui_home).execute();return;}
+            if(py>=170){if(held_ms>=1000)id(timer_reset).execute();else id(timer_main).execute();return;}
+            if(py>=122&&py<168&&(px<96||px>144)&&!id(timer_running)&&!id(timer_done)&&id(timer_left)==id(timer_set_min)*60){
+              id(timer_set_min)=std::max(1,std::min(60,id(timer_set_min)+(px<120?-1:1)));
+              id(timer_left)=id(timer_set_min)*60;id(timer_ui).execute();}return;
+          }
+          if(id(cur_slot)==6 && id(ui_view)==0) {
+            if(id(gs_max_move)>16)return;
+            if(py>207){id(ui_home).execute();return;}
+            int dx=px-120,dy=py-120;
+            if(std::abs(dx)<30&&std::abs(dy)<30){id(ui_home).execute();return;}
+            id(pizza_sel)=std::abs(dy)>=std::abs(dx)?(dy<0?0:2):(dx>0?1:3);
+            id(pizza_fire).execute();id(ui_render).execute();return;
+          }
+          if((id(ui_view)==4||id(ui_view)==5)&&std::abs(dy0)>=30&&std::abs(dy0)>std::abs(dx0)) {
+            if(dy0<0)id(pulse_swipe_up).execute();else id(pulse_swipe_down).execute();
+            if(id(ui_gesture_mode)==1||id(ui_gesture_mode)==2)return;
+            int count=0;for(auto &e:id(slot_eid))if(id(ui_view)==4?e.rfind("climate.",0)==0:id(ui_category)==0?(e.rfind("light.",0)==0||e.rfind("switch.",0)==0):e.rfind("media_player.",0)==0)count++;
+            id(ui_list_offset)=std::max(0,std::min(std::max(0,count-2),id(ui_list_offset)+(dy0<0?1:-1)));
+            id(ui_scroll_ms)=millis();id(ui_render).execute();return;
+          }
+          if((id(ui_view)==4||id(ui_view)==5)&&std::abs(dx0)>=30&&std::abs(dx0)>std::abs(dy0))return;
+          // Existing overlay widgets retain their own buttons. No global gesture click-through.
+          if(id(overlay)!=0)return;
+          if(id(ui_view)==0 && !id(gs_clock_origin))return;
+          int dx=id(gs_last_x)-id(gs_start_x),dy=id(gs_last_y)-id(gs_start_y);
+          uint32_t dt=millis()-id(gs_start_ms);int ax=std::abs(dx),ay=std::abs(dy);
+          bool dashboard=id(ui_view)>0;
+          if(dt<=1500&&(ax>=34||ay>=34)){
+            // A rejected rim interaction is consumed, never converted into a swipe.
+            int rx=id(gs_start_x)-120,ry=id(gs_start_y)-120;
+            if(rx*rx+ry*ry>=94*94 && (id(gs_clock_origin)||id(ui_view)==2))return;
+            if(ax>=ay){if(dx<0)id(pulse_swipe_left).execute();else id(pulse_swipe_right).execute();}
+            else{if(dy<0)id(pulse_swipe_up).execute();else id(pulse_swipe_down).execute();}
+            if(id(ui_gesture_mode)==1||id(ui_gesture_mode)==2)return;
+            int v=id(ui_view);
+            if(ax>=ay){
+              if(v==5||v==9||v==10){int count=0;
+                if(v==5){for(int q=0;q<6;q++){auto &e=id(slot_eid)[q];if(id(ui_category)==0?(e.rfind("light.",0)==0||e.rfind("switch.",0)==0):e.rfind("media_player.",0)==0)count++;}}
+                else if(v==9||v==10){int s=id(cur_slot);if(s>=0&&s<6){std::string a=v==9?id(slot_modes)[s]+"|"+id(slot_presets)[s]:id(slot_sources)[s];for(char c:a)if(c=='|')count++;count+=v==9?1:4;}}
+                int maxoff=std::max(0,((count-1)/3)*3);id(ui_list_offset)=std::max(0,std::min(maxoff,id(ui_list_offset)+(dx<0?3:-3)));id(ui_render).execute();
+              } else if(v==7){int q=id(ui_status_detail);id(ui_status_detail)=(q+(dx<0?1:5))%6;id(ui_render).execute();}
+              else if(v==0||v==2)id(ui_cycle).execute(dx<0?1:-1);
+            }else if(dy>0)id(ui_back).execute();
+            else if(v==0)id(ui_open).execute(6);
+            else if(v==2){int s=id(cur_slot);if(s>=0&&s<6){auto &e=id(slot_eid)[s];if(e.rfind("climate.",0)==0)id(ui_open).execute(9);else if(e.rfind("media_player.",0)==0)id(ui_open).execute(10);else id(ui_colors_open).execute();}}
+            return;
+          }
+          if(id(gs_max_move)>16)return;
+          if(dt>=1400&&id(gs_max_move)<=12&&id(gs_clock_origin)){id(standby_long_press).execute();return;}
+          if(dt>=600)return;
+          if(dashboard){id(ui_tap).execute(id(gs_start_x),id(gs_start_y));return;}
+          if(!id(gs_clock_origin))return;
+          int x=id(gs_start_x),y=id(gs_start_y);
+          if(!id(nq_title).empty()&&y>193){id(open_notifications).execute();return;}
+          if(y<76&&id(status_row)>=0){id(ui_status_detail)=id(status_row);id(ui_open).execute(7);return;}
+          if(y>=155&&id(standby_music_enabled)&&id(standby_state)=="playing"){
+            for(int q=0;q<6;q++)if(id(slot_eid)[q]==id(standby_player)){id(cur_slot)=q;id(show_current).execute();return;}
+            id(ui_category_open).execute(1);return;
+          }
+          id(ui_open).execute(1);
+
+# --- DISPLAY ------------------------------------------------------------------
+display:
+  - platform: mipi_spi
+    id: main_display
+    model: GC9A01A
+    # Shorten synchronous display transfers (previous default: 10 MHz).
+    data_rate: 40MHz
+    invert_colors: true
+    cs_pin: GPIO5
+    dc_pin: GPIO47
+    reset_pin: GPIO38
+    update_interval: never
+    auto_clear_enabled: false
+
+# --- FONTS ----------------------------------------------------------------------
+font:
+  - file: fonts/pixizhi-pixel.ttf
+    id: pixel_small
+    size: 10
+    bpp: 1
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+  - file: fonts/pixizhi-pixel.ttf
+    id: pixel_medium
+    size: 20
+    bpp: 1
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+  - file: fonts/pixizhi-pixel.ttf
+    id: pixel_large
+    size: 40
+    bpp: 1
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+
+# --- SCRIPTS --------------------------------------------------------------------
+script:
+  - id: apply_audio_output
+    mode: restart
+    then:
+      - switch.turn_off: speaker_enable
+      - if:
+          condition:
+            lambda: return id(audio_output).active_index().value_or(0) == 1;
+          then:
+            - router.speaker.switch_output:
+                id: box_speaker
+                target_speaker: usb_speaker
+          else:
+            - router.speaker.switch_output:
+                id: box_speaker
+                target_speaker: internal_speaker
+            - delay: 100ms
+            - switch.turn_on: speaker_enable
+  - id: ui_open
+    parameters:
+      view: int
+    then:
+      - lambda: |-
+          id(overlay) = 0;
+          id(ui_view) = view;
+          id(ui_list_offset) = 0;
+          id(ui_scroll_ms) = millis();
+          id(ui_scroll_tick) = -1;
+      - lvgl.page.show: dashboard_page
+      - script.execute: ui_render
+  - id: ui_home
+    then:
+      - lambda: id(cur_slot) = -1;
+      - script.execute: show_current
+  - id: ui_back
+    then:
+      - lambda: |-
+          if(id(overlay)!=0 || id(ui_view)==1) {id(ui_home).execute();return;}
+          if(id(ui_view)==8 || id(ui_view)==9 || id(ui_view)==10) {id(ui_open).execute(2);return;}
+          id(ui_open).execute(1);
+  - id: ui_category_open
+    parameters:
+      category: int
+    then:
+      - lambda: |-
+          id(ui_category)=category;
+          if(category==2){id(ui_open).execute(4);return;}
+          int count=0,first=-1;
+          for(int i=0;i<6;i++) {
+            auto &e=id(slot_eid)[i];
+            bool match=category==0?(e.rfind("light.",0)==0||e.rfind("switch.",0)==0):e.rfind("media_player.",0)==0;
+            if(match){count++;if(first<0)first=i;}
+          }
+          if(count==1){id(cur_slot)=first;id(show_current).execute();}
+          else id(ui_open).execute(5);
+  - id: ui_cycle
+    parameters:
+      direction: int
+    then:
+      - lambda: |-
+          std::vector<int> slots;
+          for(int i=0;i<6;i++)if(!id(slot_eid)[i].empty())slots.push_back(i);
+          if(slots.empty()){id(ui_open).execute(1);return;}
+          int pos=-1;for(int i=0;i<(int)slots.size();i++)if(slots[i]==id(cur_slot))pos=i;
+          pos=pos<0?(direction>0?0:slots.size()-1):(pos+direction+slots.size())%slots.size();
+          id(cur_slot)=slots[pos];id(show_current).execute();
+  - id: ui_command
+    mode: parallel
+    max_runs: 8
+    parameters:
+      slot: int
+      kind: int
+      value: float
+      option: string
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return slot>=0 && slot<6 && !id(slot_eid)[slot].empty() && id(slot_seen)[slot]!=0 &&
+                (uint32_t)(millis()-id(slot_seen)[slot])<45000 &&
+                id(slot_state)[slot]!="unavailable" && id(slot_state)[slot]!="unknown";
+          then:
+            - lambda: |-
+                if(kind<=7) {id(slot_pending)[slot]=kind;id(slot_expected)[slot]=value;id(slot_command_ms)[slot]=millis();}
+                id(ui_message)="SENDING";id(ui_message_until)=millis()+900;
+            - if:
+                condition:
+                  lambda: return kind==1;
+                then:
+                  - homeassistant.action:
+                      action: !lambda return std::string(value>0?"homeassistant.turn_on":"homeassistant.turn_off");
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+            - if:
+                condition:
+                  lambda: return kind==2;
+                then:
+                  - homeassistant.action:
+                      action: light.turn_on
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+                        brightness_pct: !lambda return esphome::to_string((int)roundf(fmaxf(1,fminf(100,value))));
+            - if:
+                condition:
+                  lambda: return kind==3;
+                then:
+                  - homeassistant.action:
+                      action: media_player.volume_set
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+                        volume_level: !lambda return esphome::to_string(fmaxf(0,fminf(id(ui_volume_limit),value))/100.0f);
+            - if:
+                condition:
+                  lambda: return kind==4;
+                then:
+                  - homeassistant.action:
+                      action: climate.set_temperature
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+                        temperature: !lambda return esphome::to_string(value);
+            - if:
+                condition:
+                  lambda: return kind==5;
+                then:
+                  - homeassistant.action:
+                      action: !lambda return std::string(value>0?"media_player.media_play":"media_player.media_pause");
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+            - if:
+                condition:
+                  lambda: return kind==6 || kind==9;
+                then:
+                  - homeassistant.action:
+                      action: climate.set_hvac_mode
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+                        hvac_mode: !lambda return option;
+            - if:
+                condition:
+                  lambda: return kind==7 && id(slot_color_capable)[slot];
+                then:
+                  - homeassistant.action:
+                      action: light.turn_on
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+                      data_template:
+                        rgb_color: "{{ [red, green, blue] }}"
+                      variables:
+                        red: !lambda return (static_cast<int>(value)>>16)&255;
+                        green: !lambda return (static_cast<int>(value)>>8)&255;
+                        blue: !lambda return static_cast<int>(value)&255;
+            - if:
+                condition:
+                  lambda: return kind==8 && id(slot_white)[slot];
+                then:
+                  - homeassistant.action:
+                      action: light.turn_on
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+                        color_temp_kelvin: !lambda return esphome::to_string((int)value);
+            - if:
+                condition:
+                  lambda: return kind==10;
+                then:
+                  - homeassistant.action:
+                      action: climate.set_preset_mode
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+                        preset_mode: !lambda return option;
+            - if:
+                condition:
+                  lambda: return kind==11;
+                then:
+                  - homeassistant.action:
+                      action: !lambda return "media_player."+option;
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+            - if:
+                condition:
+                  lambda: return kind==12;
+                then:
+                  - homeassistant.action:
+                      action: media_player.volume_mute
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+                        is_volume_muted: !lambda return value>0?"true":"false";
+            - if:
+                condition:
+                  lambda: return kind==13;
+                then:
+                  - homeassistant.action:
+                      action: media_player.shuffle_set
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+                        shuffle: !lambda return value>0?"true":"false";
+            - if:
+                condition:
+                  lambda: return kind==14;
+                then:
+                  - homeassistant.action:
+                      action: media_player.repeat_set
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+                        repeat: !lambda return option;
+            - if:
+                condition:
+                  lambda: return kind==15;
+                then:
+                  - homeassistant.action:
+                      action: media_player.select_source
+                      data:
+                        entity_id: !lambda return id(slot_eid)[slot];
+                        source: !lambda return option;
+          else:
+            - lambda: id(ui_message)="HA UNAVAILABLE"; id(ui_message_until)=millis()+2000;
+      - script.execute: ui_render
+  - id: ui_temperature
+    parameters:
+      slot: int
+      target: float
+    then:
+      - lambda: |-
+          if(slot<0||slot>=6)return;
+          id(slot_pending)[slot]=4;id(slot_expected)[slot]=target;
+          id(slot_command_ms)[slot]=millis();id(slot_temp_due)[slot]=millis()+450;
+      - script.execute: ui_render
+  - id: ui_dial_apply
+    then:
+      - lambda: |-
+          int s=id(cur_slot);if(s<0||s>=6||id(ui_view)!=2)return;
+          auto &e=id(slot_eid)[s];float span=100;
+          float lo=1,hi=100,step=1;
+          if(e.rfind("media_player.",0)==0){lo=0;hi=id(ui_volume_limit);}
+          else if(e.rfind("climate.",0)==0){lo=id(slot_tmin)[s];hi=id(slot_tmax)[s];step=id(slot_step)[s];span=hi-lo;}
+          float v=id(ui_dial_base)+id(gs_turn)/4.712389f*span;
+          v=lo+roundf((v-lo)/step)*step;
+          id(ui_dial_value)=fmaxf(lo,fminf(hi,v));
+      - script.execute: ui_render
+  - id: ui_dial_commit
+    then:
+      - lambda: |-
+          int s=id(cur_slot);if(s<0||s>=6)return;
+          auto &e=id(slot_eid)[s];int k=e.rfind("media_player.",0)==0?3:e.rfind("climate.",0)==0?4:2;
+          if(k==4)id(ui_temperature).execute(s,id(ui_dial_value));
+          else id(ui_command).execute(s,k,id(ui_dial_value),"");
+  - id: ui_tap
+    parameters:
+      x: int
+      y: int
+    then:
+      - lambda: |-
+          int v=id(ui_view),s=id(cur_slot);
+          if(y>=207 && x>=91 && x<=149){id(ui_home).execute();return;}
+          if(v==1){if(y>=43&&y<=110)id(ui_category_open).execute(x<120?0:1);
+            else if(y>=116&&y<=187){if(x<120)id(ui_category_open).execute(2);else id(ui_open).execute(6);}return;}
+          if(v==6){if(y>=52&&y<=112){if(x<120)id(open_notifications).execute();else id(open_timer).execute();}
+            else if(y>=120&&y<=185){if(x<120){id(cur_slot)=6;id(show_current).execute();}else id(ui_open).execute(3);}return;}
+          if(v==3){
+            if(y>=55&&y<92){id(ui_category_open).execute(0);return;}
+            if(y>=92&&y<163){int n=(y-92)/31,r=0;for(int q=0;q<6;q++)if(id(slot_eid)[q].rfind("climate.",0)==0){if(r++==n){id(cur_slot)=q;id(show_current).execute();return;}}}
+            if(y>=173&&y<207){int active=-1;for(int q=0;q<6;q++)if(id(status_active)[q]&&(active<0||id(status_priority)[q]>id(status_priority)[active]))active=q;if(active>=0){id(ui_status_detail)=active;id(ui_open).execute(7);}}return;
+          }
+          if((v==4||v==5)&&y>=190&&y<=211){id(ui_list_offset)++;id(ui_scroll_ms)=millis();id(ui_render).execute();return;}
+          if(v==4||v==5){std::vector<int> rows;for(int q=0;q<6;q++){auto &e=id(slot_eid)[q];
+            bool match=v==4?e.rfind("climate.",0)==0:id(ui_category)==0?(e.rfind("light.",0)==0||e.rfind("switch.",0)==0):e.rfind("media_player.",0)==0;
+            if(match)rows.push_back(q);}
+            int r=(v==4?(y-55)/67:(y-55)/62)+id(ui_list_offset);
+            if(y>=58&&y<190&&r>=0&&r<(int)rows.size()){id(cur_slot)=rows[r];id(show_current).execute();}return;}
+          if(v==7){int q=id(ui_status_detail);if(q>=0&&q<6&&y>95&&y<205){for(int j=0;j<6;j++)if(!id(status_target)[q].empty()&&id(slot_eid)[j]==id(status_target)[q]){id(cur_slot)=j;id(show_current).execute();return;}id(ui_status_action).execute(q);}return;}
+          if(s<0||s>=6)return;
+          if(id(slot_seen)[s]==0 || (uint32_t)(millis()-id(slot_seen)[s])>45000 || id(slot_state)[s]=="unavailable"||id(slot_state)[s]=="unknown") {id(ui_message)="HA UNAVAILABLE";id(ui_message_until)=millis()+2000;id(ui_render).execute();return;}
+          auto &e=id(slot_eid)[s];
+          if(v==9){std::vector<std::pair<std::string,bool>> choices;
+            auto add=[&](std::string vals,bool preset){size_t start=0;while(start<vals.size()){size_t p=vals.find('|',start);auto a=vals.substr(start,p==std::string::npos?p:p-start);if(!a.empty())choices.push_back({a,preset});if(p==std::string::npos)break;start=p+1;}};
+            add(id(slot_modes)[s],false);add(id(slot_presets)[s],true);
+            int r=(y-59)/39+id(ui_list_offset);if(y>=59&&y<185&&r>=0&&r<(int)choices.size())id(ui_command).execute(s,choices[r].second?10:9,0,choices[r].first);return;}
+          if(v==10){id(ui_music_option).execute(x,y);return;}
+          if(v!=2)return;
+          if(e.rfind("light.",0)==0||e.rfind("switch.",0)==0) {
+            if(y>=161&&y<=204){if(x<120){bool on=id(slot_pending)[s]==1?id(slot_expected)[s]>0:id(slot_state)[s]=="on";id(ui_command).execute(s,1,on?0:1,"");}
+              else if(id(slot_color_capable)[s]||id(slot_white)[s])id(ui_colors_open).execute();}
+          } else if(e.rfind("media_player.",0)==0){int f=id(slot_features)[s];
+            if(y>=128&&y<=178){if(x<87&&(f&16))id(ui_command).execute(s,11,0,"media_previous_track");
+              else if(x>153&&(f&32))id(ui_command).execute(s,11,0,"media_next_track");
+              else if(x>=87&&x<=153){bool playing=id(slot_pending)[s]==5?id(slot_expected)[s]>0:id(slot_state)[s]=="playing";if((playing&&(f&1))||(!playing&&(f&(512|16384))))id(ui_command).execute(s,5,playing?0:1,"");}}
+            else if(y>=55&&y<=123){id(ui_open).execute(10);}
+          } else {
+            if(y>=145&&y<=181&&(x<95||x>145)&&(id(slot_features)[s]&1)){
+              float t=id(slot_pending)[s]==4?id(slot_expected)[s]:id(slot_ttarget)[s];float step=id(slot_step)[s];
+              t=fmaxf(id(slot_tmin)[s],fminf(id(slot_tmax)[s],t+(x<120?-step:step)));id(ui_temperature).execute(s,t);
+            } else if(y>=183&&y<=206)id(ui_open).execute(9);
+          }
+  - id: ui_colors_open
+    then:
+      - lambda: |-
+          int s=id(cur_slot);if(s<0||s>=6)return;
+          id(ui_view)=0;
+          auto enable=[](lv_obj_t *o,bool on){if(on)lv_obj_remove_state(o,LV_STATE_DISABLED);else lv_obj_add_state(o,LV_STATE_DISABLED);};
+          enable(id(color_wheel),id(slot_color_capable)[s]);
+          enable(id(white_preset_0),id(slot_white)[s]);
+          enable(id(white_preset_1),id(slot_white)[s]);
+          enable(id(white_preset_2),id(slot_white)[s]);
+          enable(id(hue_preset_0),id(slot_color_capable)[s]);
+          enable(id(hue_preset_1),id(slot_color_capable)[s]);
+          enable(id(hue_preset_2),id(slot_color_capable)[s]);
+          enable(id(hue_preset_3),id(slot_color_capable)[s]);
+          enable(id(hue_preset_4),id(slot_color_capable)[s]);
+          enable(id(hue_preset_5),id(slot_color_capable)[s]);
+          enable(id(hue_preset_6),id(slot_color_capable)[s]);
+          enable(id(hue_preset_7),id(slot_color_capable)[s]);
+          enable(id(hue_preset_8),id(slot_color_capable)[s]);
+          enable(id(hue_preset_9),id(slot_color_capable)[s]);
+          enable(id(hue_preset_10),id(slot_color_capable)[s]);
+          enable(id(hue_preset_11),id(slot_color_capable)[s]);
+      - lvgl.page.show: colors_page
+  - id: ui_status_action
+    parameters:
+      slot: int
+    then:
+      - homeassistant.event:
+          event: esphome.pixizhi_status_tap
+          data:
+            node: ${name}
+            slot: !lambda return esphome::to_string(slot+1);
+  - id: ui_music_option
+    parameters:
+      x: int
+      y: int
+    then:
+      - lambda: |-
+          int s=id(cur_slot);if(s<0||s>=6)return;
+          int f=id(slot_features)[s];
+          std::vector<std::pair<int,std::string>> rows;
+          if(f&8)rows.push_back({12,id(slot_muted)[s]?"UNMUTE":"MUTE"});
+          if(f&32768)rows.push_back({13,id(slot_shuffle)[s]?"SHUFFLE OFF":"SHUFFLE ON"});
+          if(f&262144)rows.push_back({14,"REPEAT "+id(slot_repeat)[s]});
+          if(f&2048){std::string values=id(slot_sources)[s];size_t start=0;while(start<values.size()){
+            size_t p=values.find('|',start);auto v=values.substr(start,p==std::string::npos?p:p-start);if(!v.empty())rows.push_back({15,v});if(p==std::string::npos)break;start=p+1;}}
+          int r=(y-59)/39+id(ui_list_offset);if(y<59||y>=185||r<0||r>=(int)rows.size())return;
+          int k=rows[r].first;std::string option=rows[r].second;
+          if(k==14)option=id(slot_repeat)[s]=="off"?"all":id(slot_repeat)[s]=="all"?"one":"off";
+          float value=k==12?!id(slot_muted)[s]:k==13?!id(slot_shuffle)[s]:0;
+          id(ui_command).execute(s,k,value,option);
+  - id: ui_render
+    then:
+      - lambda: id(ui_frame_dirty) = true;
+  - id: ui_paint_frame
+    then:
+      - lambda: |-
+          if (!id(ui_ready) || (id(overlay)==0 && id(ui_view)==0 && id(cur_slot)!=6) || id(overlay)>2) return;
+          lv_obj_t *cv = id(overlay)==1 ? id(notif_canvas) : id(overlay)==2 ? id(timer_canvas) : id(cur_slot)==6 && id(ui_view)==0 ? id(pizza_canvas) : id(ui_canvas);
+          if (cv == nullptr) return;
+          lv_draw_buf_t *buf = lv_canvas_get_draw_buf(cv);
+          if (buf == nullptr || buf->data == nullptr) return;
+          const auto cf = buf->header.cf;
+          if (cf != LV_COLOR_FORMAT_RGB565 && cf != LV_COLOR_FORMAT_ARGB8888) return;
+          const int bw = static_cast<int>(buf->header.w), bh = static_cast<int>(buf->header.h);
+          const uint32_t stride = buf->header.stride;
+          const bool frame_night = id(is_night)();
+          auto put_pixel = [&](int x, int y, lv_color_t color, lv_opa_t alpha) {
+            if (x < 0 || y < 0 || x >= bw || y >= bh) return;
+            if (frame_night) color = lv_color_make(std::max({color.red,color.green,color.blue}),0,0);
+            uint8_t *row = buf->data + static_cast<size_t>(y) * stride;
+            if (cf == LV_COLOR_FORMAT_RGB565) {
+              const uint16_t rgb = ((uint16_t)(color.red >> 3) << 11) |
+                                   ((uint16_t)(color.green >> 2) << 5) | (color.blue >> 3);
+              memcpy(row + x * 2, &rgb, sizeof(rgb));
+            } else {
+              uint8_t *pixel = row + x * 4;
+              pixel[0] = color.blue; pixel[1] = color.green; pixel[2] = color.red; pixel[3] = alpha;
+            }
+          };
+
+          static const uint32_t palette[] = {0xFF2A2A,0x2EFF5C,0xFFB000,0x1AD9FF};
+          int ci = id(clock_color).active_index().value_or(2);
+          uint32_t accent = palette[std::max(0,std::min(3,ci))], white = 0xFFFFFF, dim = 0x858585;
+          lv_canvas_fill_bg(cv, lv_color_hex(0), LV_OPA_COVER);
+          auto rect = [&](int x,int y,int w,int h,uint32_t col) {
+            for (int yy=std::max(0,y); yy<std::min(240,y+h); ++yy)
+              for (int xx=std::max(0,x); xx<std::min(240,x+w); ++xx)
+                put_pixel(xx,yy,lv_color_hex(col),LV_OPA_COVER);
+          };
+          struct Glyph {char c; uint8_t row[7];};
+          static const Glyph glyphs[] = {
+           {'0',{14,17,19,21,25,17,14}},{'1',{4,12,4,4,4,4,14}}, {'2',{14,17,1,2,4,8,31}},
+           {'3',{30,1,1,14,1,1,30}},{'4',{2,6,10,18,31,2,2}},{'5',{31,16,16,30,1,1,30}},
+           {'6',{14,16,16,30,17,17,14}},{'7',{31,1,2,4,8,8,8}},{'8',{14,17,17,14,17,17,14}},
+           {'9',{14,17,17,15,1,1,14}},{'A',{14,17,17,31,17,17,17}},{'B',{30,17,17,30,17,17,30}},
+           {'C',{14,17,16,16,16,17,14}},{'D',{30,17,17,17,17,17,30}},{'E',{31,16,16,30,16,16,31}},
+           {'F',{31,16,16,30,16,16,16}},{'G',{14,17,16,23,17,17,15}},{'H',{17,17,17,31,17,17,17}},
+           {'I',{14,4,4,4,4,4,14}},{'J',{7,2,2,2,18,18,12}},{'K',{17,18,20,24,20,18,17}},
+           {'L',{16,16,16,16,16,16,31}},{'M',{17,27,21,21,17,17,17}},{'N',{17,25,25,21,19,19,17}},
+           {'O',{14,17,17,17,17,17,14}},{'P',{30,17,17,30,16,16,16}},{'Q',{14,17,17,17,21,18,13}},
+           {'R',{30,17,17,30,20,18,17}},{'S',{15,16,16,14,1,1,30}},{'T',{31,4,4,4,4,4,4}},
+           {'U',{17,17,17,17,17,17,14}},{'V',{17,17,17,17,17,10,4}},{'W',{17,17,17,21,21,21,10}},
+           {'X',{17,17,10,4,10,17,17}},{'Y',{17,17,10,4,4,4,4}},{'Z',{31,1,2,4,8,16,31}},
+           {'%',{17,2,4,4,8,16,17}},{'-',{0,0,0,31,0,0,0}},{'+',{0,4,4,31,4,4,0}},
+           {'.',{0,0,0,0,0,6,6}},{':',{0,4,4,0,4,4,0}},{'^',{6,9,9,6,0,0,0}},
+           {'/',{1,2,2,4,8,8,16}},{'?',{14,17,1,2,4,0,4}},{' ',{0,0,0,0,0,0,0}}
+          };
+          struct Small {char c;uint8_t w;uint8_t r[7];};
+          static const Small small[] = {
+            {'+',3,{0,2,7,2,0}}, {'/',3,{1,1,2,4,4}}, {'0',3,{7,5,5,5,7}}, {'1',3,{2,6,2,2,7}}, {'2',3,{7,1,7,4,7}}, {'3',3,{7,1,7,1,7}},
+            {'4',3,{5,5,7,1,1}}, {'5',3,{7,4,7,1,7}}, {'6',3,{7,4,7,5,7}}, {'7',3,{7,1,2,2,2}},
+            {'8',3,{7,5,7,5,7}}, {'9',3,{7,5,7,1,7}}, {'^',2,{3,3,0,0,0}}, {'-',3,{0,0,7,0,0}},
+            {':',1,{0,1,0,1,0}}, {' ',1,{0,0,0,0,0}},
+            {'.',1,{0,0,0,0,1}}, {'%',3,{5,1,2,4,5}},
+            {'K',3,{5,5,6,5,5}}, {'Q',3,{2,5,5,3,1}}, {'X',3,{5,5,2,5,5}}, {'Z',3,{7,1,2,4,7}}, {'?',3,{6,1,2,0,2}},
+            {'A',3,{2,5,7,5,5}}, {'B',3,{6,5,6,5,6}}, {'C',3,{3,4,4,4,3}}, {'D',3,{6,5,5,5,6}},
+            {'E',3,{7,4,6,4,7}}, {'F',3,{7,4,6,4,4}}, {'G',3,{3,4,5,5,3}}, {'H',3,{5,5,7,5,5}},
+            {'I',3,{7,2,2,2,7}}, {'J',3,{1,1,1,5,2}}, {'L',3,{4,4,4,4,7}}, {'M',5,{0x11,0x1B,0x15,0x11,0x11}},
+            {'N',4,{9,13,11,9,9}}, {'O',3,{2,5,5,5,2}}, {'P',3,{6,5,6,4,4}}, {'R',3,{6,5,6,5,5}},
+            {'S',3,{3,4,2,1,6}}, {'T',3,{7,2,2,2,2}}, {'U',3,{5,5,5,5,7}}, {'V',3,{5,5,5,5,2}},
+            {'W',5,{0x11,0x11,0x15,0x1B,0x11}}, {'Y',3,{5,5,2,2,2}}};
+          // UTF-8 degree and common Latin accents become readable pixel glyphs.
+          auto ascii = [&](const std::string &v) {
+           std::string r;
+           for (size_t i=0;i<v.size();++i) {
+            uint8_t c=v[i];
+            if(c<128) r+=(char)toupper(c);
+            else if(c==0xC2 && i+1<v.size() && (uint8_t)v[i+1]==0xB0) {r+='^';++i;}
+            else if(c==0xC3 && i+1<v.size()) {
+             uint8_t q=(uint8_t)v[++i]; q|=0x20;
+             r+=q>=0xA0&&q<=0xA5?'A':q==0xA7?'C':q<=0xAB?'E':q<=0xAF?'I':q==0xB1?'N':q<=0xB6?'O':q<=0xBC?'U':q>=0xBD?'Y':'?';
+            } else { r+='?'; while(i+1<v.size() && ((uint8_t)v[i+1]&0xC0)==0x80) ++i; }
+           }
+           return r;
+          };
+          auto small_glyph = [&](char c)->const Small*{for(auto &a:small)if(a.c==c)return &a;for(auto &a:small)if(a.c=='?')return &a;return &small[0];};
+          auto tw = [&](const std::string &v,int scale){int width=0;for(char c:v)width+=scale==1?(small_glyph(c)->w+1)*2:6*scale;return v.empty()?0:width-(scale==1?2:scale);};
+          auto text = [&](std::string v,int cx,int y,int scale,uint32_t color,int maxw=196,bool scroll=false) {
+           v=ascii(v);int cells=0,width=0;
+           for(char c:v){int w=scale==1?(small_glyph(c)->w+1)*2:6*scale;if(width+w>maxw)break;width+=w;cells++;}
+           cells=std::max(1,cells);
+           if(tw(v,scale)>maxw) {
+             if(scroll) {
+               uint32_t elapsed=millis()-id(ui_scroll_ms);int advance=elapsed<1800?0:(elapsed-1800)/220;
+               int offset=advance%(v.size()+10);if(offset>=(int)v.size())offset=0;
+               std::string loop=v+"   ";v=(loop+loop).substr(offset,cells);
+             } else v=v.substr(0,std::max(0,cells-1))+".";
+           }
+           int x=cx-tw(v,scale)/2;
+           for(char ch:v) {
+            if(scale==1){const Small *g=small_glyph(ch);for(int row=0;row<5;row++)for(int col=0;col<g->w;col++)if(g->r[row]&(1<<(g->w-1-col)))rect(x+col*2,y+row*2,2,2,color);x+=(g->w+1)*2;continue;}
+            const Glyph *g=nullptr; for(auto &a:glyphs) if(a.c==ch){g=&a;break;}
+            if(!g) for(auto &a:glyphs) if(a.c=='?'){g=&a;break;}
+            for(int row=0;row<7;row++) for(int col=0;col<5;col++) if(g->row[row]&(1<<(4-col)))
+             rect(x+col*scale,y+row*scale,scale>2?scale-1:scale,scale>2?scale-1:scale,color);
+            x+=6*scale;
+           }
+          };
+          struct Icon {const char *name;uint8_t row[7];};
+          static const Icon icons[]={
+           {"light",{28,34,65,65,34,28,28}}, {"music",{6,7,5,5,61,45,24}},
+           {"heating",{42,42,127,85,127,42,42}}, {"home",{8,28,62,127,34,42,42}},
+           {"power",{8,42,73,73,65,34,28}}, {"play",{32,48,56,60,56,48,32}},
+           {"pause",{54,54,54,54,54,54,54}}, {"prev",{5,13,29,61,29,13,5}},
+           {"next",{80,88,92,94,92,88,80}}, {"window",{127,73,73,127,73,73,127}},
+           {"door",{124,68,68,84,68,68,127}}, {"water",{8,8,28,28,62,62,28}},
+           {"lock",{28,34,34,127,99,107,127}}, {"motion",{12,12,24,62,88,20,34}},
+           {"battery",{28,62,34,42,42,34,62}}, {"alert",{8,28,28,62,54,119,127}},
+           {"flame",{8,12,28,58,62,54,28}}, {"minus",{0,0,0,62,0,0,0}},
+           {"plus",{0,8,8,62,8,8,0}}, {"palette",{28,42,85,73,67,34,28}},
+           {"back",{8,16,32,127,32,16,8}}, {"bell",{8,28,34,34,34,127,8}},
+           {"timer",{28,8,62,73,73,65,62}}, {"star",{8,8,127,62,28,54,65}},
+           {"moon",{14,24,48,48,50,30,12}}, {"bed",{0,64,94,127,127,65,65}},
+           {"sofa",{0,62,34,99,127,127,65}}, {"vacuum",{28,62,127,119,127,62,28}},
+           {"fan",{8,44,62,28,62,26,8}}, {"tv",{34,20,127,65,65,127,28}},
+           {"garage",{8,28,62,127,85,85,127}}, {"package",{28,62,107,93,65,65,127}},
+           {"info",{8,0,24,8,8,8,28}}, {"check",{0,1,3,70,108,56,16}},
+           {"mail",{0,127,99,85,73,65,127}}
+          };
+          auto icon = [&](const std::string &name,int cx,int y,int scale,uint32_t color) {
+           std::string key=name=="lightbulb"?"light":name=="fire"?"flame":name=="night"?"moon":name=="washer"?"water":name=="movie"?"tv":name;
+           const Icon *g=&icons[21];for(auto &i:icons) if(key==i.name){g=&i;break;}
+           for(int r=0;r<7;r++)for(int c=0;c<7;c++)if(g->row[r]&(1<<(6-c)))
+            rect(cx-7*scale/2+c*scale,y+r*scale,scale>2?scale-1:scale,scale>2?scale-1:scale,color);
+          };
+          auto dial = [&](float fraction) {
+           fraction=fmaxf(0,fminf(1,fraction));
+           for(int k=0;k<48;k++) {
+            float a=(135.0f+k*270.0f/47)*0.0174532925f;
+            int x=120+cosf(a)*109,y=120+sinf(a)*109;
+            rect(x-2,y-2,5,5,k<(int)roundf(fraction*48)?accent:0x252219);
+           }
+          };
+          auto number = [&](float v,int decimals) {char b[24];snprintf(b,sizeof(b),decimals==2?"%.2f":decimals==1?"%.1f":"%.0f",v);return std::string(b);};
+          auto footer = [&]() {icon("home",120,214,2,accent);};
+          auto stale = [&](int s) {return id(slot_seen)[s]==0 || (uint32_t)(millis()-id(slot_seen)[s])>45000;};
+          auto available = [&](int s) {return !stale(s) && id(slot_state)[s]!="unavailable" && id(slot_state)[s]!="unknown";};
+          int view=id(overlay)==1?11:id(overlay)==2?12:id(cur_slot)==6&&id(ui_view)==0?13:id(ui_view), s=id(cur_slot);
+          if(view==11) {
+           text("ALERTS",120,28,2,white,160);
+           if(id(nq_title).empty()){text("ALL CLEAR",120,112,2,accent,170);footer();}
+           else {
+            bool urgent=id(nq_urgent)[0];uint32_t ink=urgent?0xFF2A2A:id(nq_color)[0];
+            text("1 / "+std::to_string(id(nq_title).size()),120,47,1,dim,100);
+            icon(id(nq_icon)[0],120,65,3,ink);
+            text(id(nq_title)[0],120,94,2,white,188,true);
+            std::string msg=ascii(id(nq_msg)[0]);std::vector<std::string> lines;
+            while(!msg.empty()) {size_t cut=std::min<size_t>(15,msg.size());if(cut<msg.size()){auto sp=msg.rfind(' ',cut);if(sp!=std::string::npos&&sp>0)cut=sp;}lines.push_back(msg.substr(0,cut));msg.erase(0,cut);while(!msg.empty()&&msg[0]==' ')msg.erase(0,1);}
+            int off=std::max(0,std::min(std::max(0,(int)lines.size()-3),id(notification_line)));id(notification_line)=off;
+            for(int r=0;r<3 && off+r<(int)lines.size();r++)text(lines[off+r],120,119+r*19,2,white,184);
+            if(off+3<(int)lines.size())text("V",120,183,2,ink,16);
+            text(urgent?"HOLD TO DISMISS":"TAP TO DISMISS",120,207,1,ink,132);
+           }
+          } else if(view==12) {
+           text("TIMER",120,28,2,white,160);
+           text(id(timer_done)?"TIME IS UP":id(timer_running)?"RUNNING":id(timer_left)==id(timer_set_min)*60?"SET MINUTES":"PAUSED",120,61,2,accent,180);
+           int left=std::max(0,id(timer_left));char b[16];snprintf(b,sizeof(b),"%02d:%02d",left/60,left%60);
+           text(b,120,91,5,white,184);
+           bool adjustable=!id(timer_running)&&!id(timer_done)&&id(timer_left)==id(timer_set_min)*60;
+           if(adjustable){text("-",62,139,3,accent,36);text("+",178,139,3,accent,36);text("MIN",120,146,1,dim,48);}
+           else text("HOLD BUTTON TO RESET",120,145,1,dim,180);
+           rect(65,175,110,2,accent);rect(65,201,110,2,accent);rect(65,175,2,28,accent);rect(173,175,2,28,accent);
+           text(id(timer_done)?"STOP":id(timer_running)?"PAUSE":adjustable?"START":"RESUME",120,182,2,white,100);
+           footer();
+          } else if(view==13) {
+           text("ACTIONS",120,24,2,white,168);
+           int xs[]={120,188,120,52},ys[]={51,105,159,105};
+           for(int k=0;k<4;k++) {
+            uint32_t ink=k==id(pizza_sel)?white:accent;
+            icon(id(pizza_keys)[k],xs[k],ys[k],3,ink);
+            text(id(pizza_labels)[k],xs[k],ys[k]+26,1,ink,k==1||k==3?70:110);
+           }
+           icon("home",120,108,3,dim);footer();
+          } else if(view==1) {
+           icon("light",77,43,6,accent); text("LIGHTS",77,94,1,white,80);
+           icon("music",163,43,6,white);text("MUSIC",163,94,1,white,80);
+           icon("heating",77,118,6,accent);text("HEAT",77,169,1,white,80);
+           icon("home",163,118,6,white);text("HOME",163,169,1,white,80);
+           footer();
+          } else if(view==3 || view==4) {
+           text(view==4?"HEATING":"HOME",120,28,2,white,160);
+           std::vector<int> rows;
+           for(int i=0;i<6;i++) if(!id(slot_eid)[i].empty() && (view!=4 || id(slot_eid)[i].rfind("climate.",0)==0)) rows.push_back(i);
+           if(view==4) {
+            id(ui_list_offset)=std::max(0,std::min(std::max(0,(int)rows.size()-2),id(ui_list_offset)));
+            for(int r=0;r<2 && id(ui_list_offset)+r<(int)rows.size();r++) {
+             int q=rows[id(ui_list_offset)+r],y=61+r*67;
+             text(id(slot_label)[q],120,y,2,white,182,true);
+             std::string v=available(q)?number(id(slot_tnow)[q],1)+"^ / "+number(id(slot_ttarget)[q],1)+"^":"UNAVAILABLE";
+             text(v,120,y+23,2,accent,182);
+             text(id(slot_action)[q]=="heating"?"HEATING":id(slot_state)[q],120,y+43,1,dim,160);
+            }
+            if(id(ui_list_offset)>0){for(int k=0;k<3;k++){rect(192-k*2,49+k*2,2,2,dim);rect(192+k*2,49+k*2,2,2,dim);}}
+            if(id(ui_list_offset)+2<(int)rows.size())text("V",120,197,2,accent,18);
+            if(rows.empty()) text("ADD THERMOSTATS",120,108,1,dim);
+           } else {
+            int count=0;for(int q:rows)if(id(slot_eid)[q].rfind("light.",0)==0&&available(q)&&id(slot_state)[q]=="on")count++;
+            icon("light",48,64,2,accent);text(std::to_string(count)+" LIGHTS ON",135,67,1,white,144);
+            int r=0;for(int q:rows) if(id(slot_eid)[q].rfind("climate.",0)==0 && r<2) {
+             std::string v=id(slot_label)[q]+" "+(available(q)?(id(slot_tnow)[q]>-100?number(id(slot_tnow)[q],1)+"^":"--"):"--");
+             icon("heating",48,98+r*31,2,accent);text(v,137,101+r*31,1,white,140);r++;
+            }
+            int active=-1;for(int i=0;i<6;i++)if(id(status_active)[i]&&(active<0||id(status_priority)[i]>id(status_priority)[active]))active=i;
+            rect(49,173,142,1,0x303030);
+            if(active>=0){icon(id(status_icons)[active],51,184,2,accent);text(id(status_labels)[active],137,187,1,accent,136);}
+            else text("ALL CLEAR",120,187,1,dim);
+           }
+           footer();
+          } else if(view==5) {
+           text(id(ui_category)==0?"LIGHTS":"MUSIC",120,28,2,white,160);
+           std::vector<int> slots;
+           for(int q=0;q<6;q++) {
+            auto &e=id(slot_eid)[q];
+            if((id(ui_category)==0&&(e.rfind("light.",0)==0||e.rfind("switch.",0)==0)) || (id(ui_category)==1&&e.rfind("media_player.",0)==0))slots.push_back(q);
+           }
+           id(ui_list_offset)=std::max(0,std::min(std::max(0,(int)slots.size()-2),id(ui_list_offset)));
+           for(int r=0;r<2;r++) {int idx=id(ui_list_offset)+r;if(idx>=(int)slots.size())break;int q=slots[idx],y=67+r*62;
+            text(id(slot_label)[q],120,y,2,white,182,true);
+            text(available(q)?id(slot_state)[q]:"UNAVAILABLE",120,y+24,2,accent,174);
+           }
+           if(slots.empty())text("NO ENTITIES",120,108,1,dim);
+           if(id(ui_list_offset)>0){for(int k=0;k<3;k++){rect(192-k*2,49+k*2,2,2,dim);rect(192+k*2,49+k*2,2,2,dim);}}
+           if(id(ui_list_offset)+2<(int)slots.size())text("V",120,197,2,accent,18);
+           footer();
+          } else if(view==6) {
+           text("HOME TOOLS",120,28,2,white,180);
+           icon("bell",77,65,3,accent);text("ALERTS",77,93,1,white,80);
+           icon("timer",163,65,3,white);text("TIMER",163,93,1,white,80);
+           icon("star",77,130,3,accent);text("ACTIONS",77,158,1,white,80);
+           icon("home",163,130,3,white);text("STATUS",163,158,1,white,80);footer();
+          } else if(view==7) {
+           text("STATUS",120,28,2,white,160);
+           int q=id(ui_status_detail);
+           if(q>=0&&q<6) {icon(id(status_icons)[q],120,57,5,accent);text(id(status_labels)[q],120,105,3,white,190,true);
+            text(id(status_value)[q],120,140,2,white,184,true);text(id(status_active)[q]?"ACTIVE":"CLEAR",120,168,2,accent);
+            text(id(status_target)[q].empty()?"":"TAP TO OPEN",120,185,1,dim);}
+           footer();
+          } else if(view==10 && s>=0 && s<6) {
+           text("MUSIC OPTIONS",120,28,2,white,190);
+           int f=id(slot_features)[s];std::vector<std::string> rows;
+           if(f&8)rows.push_back(id(slot_muted)[s]?"UNMUTE":"MUTE");
+           if(f&32768)rows.push_back(id(slot_shuffle)[s]?"SHUFFLE OFF":"SHUFFLE ON");
+           if(f&262144)rows.push_back("REPEAT "+id(slot_repeat)[s]);
+           if(f&2048){std::string a=id(slot_sources)[s];size_t start=0;while(start<a.size()){size_t p=a.find('|',start);auto v=a.substr(start,p==std::string::npos?p:p-start);if(!v.empty())rows.push_back(v);if(p==std::string::npos)break;start=p+1;}}
+           for(int r=0;r<3;r++){int idx=id(ui_list_offset)+r;if(idx<(int)rows.size())text(rows[idx],120,72+r*39,1,white,180);}
+           if(rows.empty())text("NO EXTRA CONTROLS",120,108,1,dim,180);
+           if(rows.size()>3)text("SWIPE FOR MORE",120,195,1,dim,170);
+          footer();
+          } else if(view==9 && s>=0 && s<6) {
+           text("HEAT MODE",120,28,2,white,180);
+           std::string values=id(slot_modes)[s]+"|"+id(slot_presets)[s];
+           std::vector<std::string> choices;size_t start=0;
+           while(start<values.size()){size_t pos=values.find('|',start);std::string v=values.substr(start,pos==std::string::npos?pos:pos-start);if(!v.empty())choices.push_back(v);if(pos==std::string::npos)break;start=pos+1;}
+           for(int r=0;r<3;r++){int idx=id(ui_list_offset)+r;if(idx<(int)choices.size())text(choices[idx],120,72+r*39,2,white,170);}
+           if(choices.size()>3)text("SWIPE FOR MORE",120,195,1,dim,170);
+          footer();
+          } else if(view==2 && s>=0 && s<6) {
+           bool ok=available(s);int pending=id(slot_pending)[s];
+           auto &e=id(slot_eid)[s]; bool light=e.rfind("light.",0)==0||e.rfind("switch.",0)==0;
+           bool music=e.rfind("media_player.",0)==0;
+           bool dragging=id(gs_rotating)&&id(gs_touch_active);
+           if(!light)text(id(slot_label)[s],120,39,music?2:1,white,164);
+           if(light) {
+            float pct=dragging?id(ui_dial_value):(pending==2?id(slot_expected)[s]:id(slot_bri)[s]*100.0f/255.0f);
+            bool on=pending==1?id(slot_expected)[s]>0:pending==2?true:id(slot_state)[s]=="on";
+            if(id(slot_dimmable)[s])dial(on?pct/100:0);
+            std::string v=!ok?"--":!on?"OFF":id(slot_dimmable)[s]?number(pct,0)+"%":"ON";
+            text(v,120,66,6,white,190);
+            text(id(slot_label)[s],120,127,2,white,172);
+            icon("power",88,168,4,white);
+            if(id(slot_color_capable)[s]||id(slot_white)[s]) icon("palette",152,168,4,accent);
+           } else if(music) {
+            float vol=dragging?id(ui_dial_value):pending==3?id(slot_expected)[s]:id(slot_vol)[s]*100;
+            dial(vol/100);
+            text(id(slot_title)[s].empty()?id(slot_state)[s]:id(slot_title)[s],120,77,2,white,180,true);
+            text(id(slot_artist)[s],120,103,2,accent,180,true);
+            int f=id(slot_features)[s];
+            bool playing=pending==5?id(slot_expected)[s]>0:id(slot_state)[s]=="playing";
+            if(playing)for(int bar=0;bar<3;bar++){int h=1+((millis()/400+bar*2)%3);for(int j=0;j<h;j++)rect(112+bar*6,65-j*3,4,2,accent);}
+            icon("prev",66,145,2,(ok&&(f&16))?white:0x454545);
+            icon(playing?"pause":"play",120,141,3,(ok&&(f&(1|512|16384)))?accent:0x454545);
+            icon("next",174,145,2,(ok&&(f&32))?white:0x454545);
+            text("VOL "+number(vol,0)+"%",120,184,1,white,160);
+           } else {
+            float target=dragging?id(ui_dial_value):pending==4?id(slot_expected)[s]:id(slot_ttarget)[s];
+            float lo=id(slot_tmin)[s],hi=id(slot_tmax)[s];dial((target-lo)/fmaxf(1,hi-lo));
+            text(ok?number(target,id(slot_step)[s]<0.5f?2:1)+"^":"--",120,74,5,white,190);
+            text("NOW "+(ok?(id(slot_tnow)[s]>-100?number(id(slot_tnow)[s],1)+"^":"--"):"--")+" "+(id(slot_unit)[s].find("F")!=std::string::npos?"F":"C"),120,123,2,accent,178);
+            icon("minus",67,157,3,white);icon("plus",173,157,3,white);
+            icon("flame",120,151,3,id(slot_action)[s]=="heating"?accent:dim);
+            text(id(slot_action)[s]=="heating"?"HEATING":id(slot_state)[s],120,185,1,accent,150);
+           }
+           if(!ok) text(stale(s)?"STALE / OFFLINE":"UNAVAILABLE",120,199,1,dim,170);
+           else if(pending)text("SENDING",120,199,1,dim,120);
+           footer();
+          }
+          if((uint32_t)(millis()-id(ui_last_sync))>45000 || id(ui_last_sync)==0)text("HA OFFLINE",120,15,1,dim,120);
+          if(!id(ui_message).empty() && (int32_t)(id(ui_message_until)-millis())>0) {
+           rect(34,195,172,14,0);text(id(ui_message),120,198,1,white,168);
+          }
+          lv_obj_invalidate(cv);
+  - id: clock_brightness_apply
+    then:
+      - lambda: |-
+          // Three quarters of a turn spans the full brightness range.
+          float value = id(gs_base_brightness) + id(gs_turn) / 4.712389f;
+          value = fmaxf(0.05f, fminf(1.0f, value));
+          id(gs_target_brightness) = value;
+          if(id(is_night)()) {id(backlight_pwm).set_level(value);} else {
+          auto call = id(screen_light).turn_on();
+          call.set_brightness(value);
+          call.set_transition_length(0);
+          call.set_publish(false);  // Publish once on release, not every touch sample.
+          call.set_save(false);
+          call.perform();
+          }
+          id(clock_brightness_until) = millis()+1200;
+          id(draw_dot_clock).execute();
+      - script.execute: clock_brightness_hide
+  - id: clock_brightness_hide
+    mode: restart
+    then:
+      - delay: 1200ms
+      - lambda: id(clock_brightness_until) = 0;
+      - script.execute: draw_dot_clock
+  - id: report_clock_rotation
+    then:
+      - lambda: |-
+          if(id(is_night)()){auto night_call=id(night_brightness).make_call();night_call.set_value(id(gs_target_brightness)*100);night_call.perform();}
+          else {
+          auto call = id(screen_light).turn_on();
+          // Commit the actual gesture result, never the previously published HA value.
+          call.set_brightness(id(gs_target_brightness));
+          call.set_publish(true);
+          call.set_save(true);
+          call.set_transition_length(0);
+          call.perform();
+          }
+      - homeassistant.event:
+          event: esphome.pixizhi_rotate
+          data:
+            node: ${name}
+            direction: !lambda |-
+              return std::string(id(gs_turn) >= 0 ? "clockwise" : "counterclockwise");
+            brightness: !lambda return esphome::to_string((int) roundf(id(gs_target_brightness) * 100));
+  - id: desk_play_pause
+    then:
+      - if:
+          condition:
+            lambda: return id(standby_player).rfind("media_player.", 0) == 0 && id(standby_state) == "playing";
+          then:
+            - homeassistant.action:
+                action: media_player.media_play_pause
+                data:
+                  entity_id: !lambda return id(standby_player);
+  - id: pulse_swipe_left
+    mode: restart
+    then:
+      - binary_sensor.template.publish: { id: swipe_left, state: ON }
+      - homeassistant.event:
+          event: esphome.pixizhi_gesture
+          data:
+            node: ${name}
+            gesture: swipe_left
+      - delay: 200ms
+      - binary_sensor.template.publish: { id: swipe_left, state: OFF }
+  - id: pulse_swipe_right
+    mode: restart
+    then:
+      - binary_sensor.template.publish: { id: swipe_right, state: ON }
+      - homeassistant.event:
+          event: esphome.pixizhi_gesture
+          data:
+            node: ${name}
+            gesture: swipe_right
+      - delay: 200ms
+      - binary_sensor.template.publish: { id: swipe_right, state: OFF }
+  - id: pulse_swipe_up
+    mode: restart
+    then:
+      - binary_sensor.template.publish: { id: swipe_up, state: ON }
+      - homeassistant.event:
+          event: esphome.pixizhi_gesture
+          data:
+            node: ${name}
+            gesture: swipe_up
+      - delay: 200ms
+      - binary_sensor.template.publish: { id: swipe_up, state: OFF }
+  - id: pulse_swipe_down
+    mode: restart
+    then:
+      - binary_sensor.template.publish: { id: swipe_down, state: ON }
+      - homeassistant.event:
+          event: esphome.pixizhi_gesture
+          data:
+            node: ${name}
+            gesture: swipe_down
+      - delay: 200ms
+      - binary_sensor.template.publish: { id: swipe_down, state: OFF }
+
+  - id: apply_backlight
+    then:
+      - lambda: |-
+          const float level = id(is_night)() ? id(night_brightness).state / 100.0f :
+              id(bl_requested) * (id(bl_dimmed) ? id(standby_brightness).state / 100.0f : 1.0f);
+          id(backlight_pwm).set_level(fmaxf(0.0f, fminf(1.0f, level)));
+
+  - id: update_clock
+    then:
+      - script.execute: apply_standby_style
+      - script.execute: draw_dot_clock
+
+  - id: apply_standby_style
+    then:
+      - lambda: |-
+          if (!id(ui_ready)) return;
+          const bool night = id(is_night)();
+          static bool themed = false;
+          const bool changed = !themed || id(night_active) != night;
+          themed = true;
+          id(night_active) = night;
+          // Color filters cover native LVGL controls (picker/pairing); canvases
+          // also tint their pixels explicitly, since image pixels bypass text filters.
+          static lv_color_filter_dsc_t red_filter = {
+            [](const lv_color_filter_dsc_t *, lv_color_t c, lv_opa_t) -> lv_color_t {
+              return lv_color_make(std::max({c.red,c.green,c.blue}), 0, 0);
+            }, nullptr
+          };
+          auto tint = [&](auto &&self, lv_obj_t *o) -> void {
+            lv_obj_set_style_color_filter_dsc(o, night ? &red_filter : nullptr, LV_PART_MAIN);
+            lv_obj_set_style_color_filter_opa(o, night ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
+            for (uint32_t i=0;i<lv_obj_get_child_count(o);i++) self(self,lv_obj_get_child(o,i));
+          };
+          lv_obj_t *roots[] = {id(standby_page)->obj,id(dashboard_page)->obj,id(colors_page)->obj,id(pizza_page)->obj,id(notif_page)->obj,id(timer_page)->obj,id(pairing_card)};
+          if(changed){for(auto *o:roots)tint(tint,o);id(draw_wheel).execute();}
+          id(apply_backlight).execute();
+          id(draw_dot_clock).execute();
+          id(ui_render).execute();
+
+  - id: standby_long_press
+    then:
+      - if:
+          condition:
+            lambda: return id(longpress_mode).active_index().value_or(0) == 1;
+          then:
+            - script.execute: open_timer
+          else:
+            - homeassistant.event:
+                event: esphome.pixizhi_long_press
+                data:
+                  node: ${name}
+            - script.execute: draw_dot_clock
+            - delay: 400ms
+            - script.execute: apply_standby_style
+
+  # ---------------- DOT MATRIX CLOCK ----------------
+  - id: draw_dot_clock
+    then:
+      - lambda: id(clock_frame_dirty) = true;
+  - id: clock_paint_frame
+    then:
+      - lambda: |-
+          if (!id(ui_ready)) return;
+          struct G { char c; uint8_t w; uint8_t r[7]; };
+          static const G BIG[] = {
+            {'0',5,{0x0E,0x11,0x13,0x15,0x19,0x11,0x0E}}, {'1',5,{0x04,0x0C,0x04,0x04,0x04,0x04,0x0E}},
+            {'2',5,{0x0E,0x11,0x01,0x02,0x04,0x08,0x1F}}, {'3',5,{0x1F,0x02,0x04,0x02,0x01,0x11,0x0E}},
+            {'4',5,{0x02,0x06,0x0A,0x12,0x1F,0x02,0x02}}, {'5',5,{0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E}},
+            {'6',5,{0x06,0x08,0x10,0x1E,0x11,0x11,0x0E}}, {'7',5,{0x1F,0x01,0x02,0x04,0x08,0x08,0x08}},
+            {'8',5,{0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E}}, {'9',5,{0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C}},
+            {':',1,{0x00,0x01,0x01,0x00,0x01,0x01,0x00}}, {'-',5,{0x00,0x00,0x00,0x1F,0x00,0x00,0x00}}};
+          static const G SM[] = {
+            {'0',3,{7,5,5,5,7}}, {'1',3,{2,6,2,2,7}}, {'2',3,{7,1,7,4,7}}, {'3',3,{7,1,7,1,7}},
+            {'4',3,{5,5,7,1,1}}, {'5',3,{7,4,7,1,7}}, {'6',3,{7,4,7,5,7}}, {'7',3,{7,1,2,2,2}},
+            {'8',3,{7,5,7,5,7}}, {'9',3,{7,5,7,1,7}}, {'^',2,{3,3,0,0,0}}, {'-',3,{0,0,7,0,0}},
+            {':',1,{0,1,0,1,0}}, {' ',1,{0,0,0,0,0}},
+            {'.',1,{0,0,0,0,1}}, {'%',3,{5,1,2,4,5}},
+            {'K',3,{5,5,6,5,5}}, {'Q',3,{2,5,5,3,1}}, {'X',3,{5,5,2,5,5}}, {'Z',3,{7,1,2,4,7}}, {'?',3,{6,1,2,0,2}},
+            {'A',3,{2,5,7,5,5}}, {'B',3,{6,5,6,5,6}}, {'C',3,{3,4,4,4,3}}, {'D',3,{6,5,5,5,6}},
+            {'E',3,{7,4,6,4,7}}, {'F',3,{7,4,6,4,4}}, {'G',3,{3,4,5,5,3}}, {'H',3,{5,5,7,5,5}},
+            {'I',3,{7,2,2,2,7}}, {'J',3,{1,1,1,5,2}}, {'L',3,{4,4,4,4,7}}, {'M',5,{0x11,0x1B,0x15,0x11,0x11}},
+            {'N',4,{9,13,11,9,9}}, {'O',3,{2,5,5,5,2}}, {'P',3,{6,5,6,4,4}}, {'R',3,{6,5,6,5,5}},
+            {'S',3,{3,4,2,1,6}}, {'T',3,{7,2,2,2,2}}, {'U',3,{5,5,5,5,7}}, {'V',3,{5,5,5,5,2}},
+            {'W',5,{0x11,0x11,0x15,0x1B,0x11}}, {'Y',3,{5,5,2,2,2}}};
+          // 9x7 weather icons
+          struct I { const char *k; uint16_t r[7]; };
+          static const I ICO[] = {
+            {"sun",   {0x111,0x082,0x07C,0x17D,0x07C,0x082,0x111}},
+            {"moon",  {0x070,0x0E0,0x1C0,0x1C0,0x1C0,0x0E0,0x070}},
+            {"part",  {0x120,0x06C,0x0FE,0x1FF,0x1FF,0x0FE,0x000}},
+            {"cloud", {0x018,0x07C,0x0FE,0x1FF,0x1FF,0x0FE,0x000}},
+            {"rain",  {0x07C,0x0FE,0x1FF,0x0FE,0x000,0x092,0x124}},
+            {"snow",  {0x07C,0x0FE,0x1FF,0x0FE,0x000,0x155,0x0AA}},
+            {"bolt",  {0x07C,0x0FE,0x1FF,0x030,0x060,0x030,0x040}},
+            {"fog",   {0x000,0x1FF,0x000,0x0FE,0x000,0x1FF,0x000}},
+            {"wind",  {0x018,0x1E4,0x004,0x1F8,0x004,0x1E4,0x018}}};
+
+          lv_obj_t *cv = id(dm_canvas);
+          if (cv == nullptr) return;
+          lv_draw_buf_t *buf = lv_canvas_get_draw_buf(cv);
+          if (buf == nullptr || buf->data == nullptr) return;
+          const auto cf = buf->header.cf;
+          if (cf != LV_COLOR_FORMAT_RGB565 && cf != LV_COLOR_FORMAT_ARGB8888) return;
+          const int bw = static_cast<int>(buf->header.w), bh = static_cast<int>(buf->header.h);
+          const uint32_t stride = buf->header.stride;
+          const bool frame_night = id(is_night)();
+          auto put_pixel = [&](int x, int y, lv_color_t color, lv_opa_t alpha) {
+            if (x < 0 || y < 0 || x >= bw || y >= bh) return;
+            if (frame_night) color = lv_color_make(std::max({color.red,color.green,color.blue}),0,0);
+            uint8_t *row = buf->data + static_cast<size_t>(y) * stride;
+            if (cf == LV_COLOR_FORMAT_RGB565) {
+              const uint16_t rgb = ((uint16_t)(color.red >> 3) << 11) |
+                                   ((uint16_t)(color.green >> 2) << 5) | (color.blue >> 3);
+              memcpy(row + x * 2, &rgb, sizeof(rgb));
+            } else {
+              uint8_t *pixel = row + x * 4;
+              pixel[0] = color.blue; pixel[1] = color.green; pixel[2] = color.red; pixel[3] = alpha;
+            }
+          };
+
+          bool night = id(is_night)();
+          static const uint32_t ON[4]  = {0xFF2A2A, 0x2EFF5C, 0xFFB000, 0x1AD9FF};
+          static const uint32_t OFF[4] = {0x2A0808, 0x082A10, 0x2A1D00, 0x06242A};
+          int ci = id(clock_color).active_index().value_or(2);
+          if (ci > 3) ci = 2;
+          lv_color_t con = lv_color_hex(ON[ci]);
+          lv_color_t coff = lv_color_hex(OFF[ci]);
+          lv_canvas_fill_bg(cv, lv_color_hex(0x000000), LV_OPA_COVER);
+
+          auto dot = [&](float cx, float cy, float rad, bool lit) {
+            lv_color_t c = lit ? con : coff;
+            int x0 = (int) floorf(cx - rad), x1 = x0 + std::max(1, (int)(rad * 2)) - 1;
+            int y0 = (int) floorf(cy - rad), y1 = y0 + std::max(1, (int)(rad * 2)) - 1;
+            for (int y = y0; y <= y1; y++) {
+              for (int x = x0; x <= x1; x++) {
+                if (x < 0 || y < 0 || x >= 240 || y >= 240) continue;
+                put_pixel(x, y, c, LV_OPA_COVER);
+              }
+            }
+          };
+          auto find = [&](char ch, bool big) -> const G * {
+            if (big) { for (auto &g : BIG) if (g.c == ch) return &g; }
+            else { for (auto &g : SM) if (g.c == ch) return &g; }
+            return nullptr;
+          };
+          auto width = [&](const std::string &str, bool big) -> int {
+            int cols = 0, n = 0;
+            for (char ch : str) { auto *g = find(ch, big); if (g) { cols += g->w; n++; } }
+            return n ? cols + n - 1 : 0;
+          };
+          auto text = [&](const std::string &str, bool big, float x, float y0, float pitch, float rad) {
+            int rows = big ? 7 : 5;
+            for (char ch : str) {
+              auto *g = find(ch, big);
+              if (!g) continue;
+              for (int r = 0; r < rows; r++)
+                for (int k = 0; k < g->w; k++)
+                  dot(x + k * pitch, y0 + r * pitch, rad, (g->r[r] >> (g->w - 1 - k)) & 1);
+              x += (g->w + 1) * pitch;
+            }
+          };
+
+          auto now = id(ha_time).now();
+          // ---- weather row (icon + temperature) ----
+          if(id(ui_last_sync)==0 || (uint32_t)(millis()-id(ui_last_sync))>45000) {
+            std::string msg="HA OFFLINE";float p=3.0f;int cols=width(msg,false);
+            text(msg,false,120-cols*p/2+p/2,51,p,1.1f);
+          } else if (id(status_row) < 0 && id(w_ok)) {
+            const std::string &c = id(w_cond);
+            const char *key = "cloud";
+            if (c == "sunny") key = "sun";
+            else if (c == "clear-night") key = "moon";
+            else if (c == "partlycloudy") key = "part";
+            else if (c == "rainy" || c == "pouring") key = "rain";
+            else if (c == "lightning" || c == "lightning-rainy") key = "bolt";
+            else if (c == "snowy" || c == "snowy-rainy" || c == "hail") key = "snow";
+            else if (c == "fog") key = "fog";
+            else if (c == "windy" || c == "windy-variant") key = "wind";
+            const I *ic = &ICO[3];
+            for (auto &i : ICO) if (strcmp(i.k, key) == 0) ic = &i;
+            std::string t = esphome::to_string((int) roundf(id(w_temp))) + "^";
+            const float tp = 4.2f;
+            int tcols = width(t, false);
+            float total = (9 + 2 + tcols) * tp;
+            float x0 = 120 - total / 2 + tp / 2;
+            for (int r = 0; r < 7; r++)
+              for (int k = 0; k < 9; k++)
+                dot(x0 + k * tp + (id(weather_frame) % 2), 40 + r * tp + (id(weather_frame) >= 2 ? 1 : 0), 1.7f, (ic->r[r] >> (8 - k)) & 1);
+            text(t, false, x0 + 11 * tp, 44, tp, 1.7f);
+          }
+          // Built-in 7x7 pixel glyphs; HA sends symbolic names, never image bytes.
+          if (id(status_row) >= 0 && id(status_row) < 6 && id(status_active)[id(status_row)]) {
+            struct S { const char *name; uint8_t rows[7]; };
+            static const S STATUS[] = {
+              {"window", {127,73,73,127,73,73,127}},
+              {"door", {62,34,34,42,34,34,127}},
+              {"heating", {20,42,20,42,20,0,127}},
+              {"lock", {28,34,34,127,107,107,127}},
+              {"light", {28,34,65,34,28,28,28}},
+              {"water", {8,8,28,28,62,62,28}},
+              {"music", {15,9,9,9,57,57,7}},
+              {"motion", {12,12,48,30,20,36,66}},
+              {"battery", {28,127,65,93,93,65,127}},
+              {"home", {8,28,62,127,54,54,54}},
+              {"alert", {8,28,28,62,54,127,8}}
+            };
+            const S *glyph = &STATUS[sizeof(STATUS) / sizeof(STATUS[0]) - 1];
+            for (auto &g : STATUS) if (id(status_icons)[id(status_row)] == g.name) glyph = &g;
+            std::string label = id(status_labels)[id(status_row)];
+            for (auto &ch : label) {
+              if (ch >= 'a' && ch <= 'z') ch -= 32;
+              if (!find(ch, false)) ch = '?';
+            }
+            label = label.substr(0, 12);
+            int cols = 9 + width(label, false);
+            float pitch = fminf(4.0f, 174.0f / std::max(1, cols));
+            float x0 = 120 - cols * pitch / 2 + pitch / 2;
+            for (int r = 0; r < 7; r++)
+              for (int k = 0; k < 7; k++)
+                dot(x0 + k * pitch, 40 + r * pitch, pitch * 0.40f, (glyph->rows[r] >> (6-k)) & 1);
+            con = lv_color_hex(id(is_night)() ? 0x808080 : 0xFFFFFF);
+            coff = lv_color_hex(0x101010);
+            text(label, false, x0 + 9 * pitch, 40 + pitch, pitch, pitch * 0.40f);
+            // Restore the selected color for the large clock.
+            con = lv_color_hex(ON[ci]);
+            coff = lv_color_hex(OFF[ci]);
+          }
+          // ---- time: widest digits that fit (25 columns) ----
+          std::string hm = now.is_valid() ? now.strftime("%H:%M") : std::string("--:--");
+          {
+            const float p = 8.8f;
+            int cols = width(hm, true);
+            text(hm, true, 120 - cols * p / 2 + p / 2, 120 - 3 * p, p, 3.7f);
+          }
+          // ---- date (or running timer) ----
+          std::string line;
+          if (id(timer_running)) {
+            char b[32];
+            snprintf(b, sizeof(b), "TIMER %02d:%02d", id(timer_left) / 60, id(timer_left) % 60);
+            line = b;
+          } else if (!id(standby_music_enabled) || id(standby_state) != "playing" || id(standby_title).empty()) {
+            auto number = [](const std::string &v, int decimals) -> std::string {
+              char *end = nullptr;
+              float f = strtof(v.c_str(), &end);
+              if (end == v.c_str() || *end != '\0' || !std::isfinite(f)) return "--";
+              char buf[20];
+              snprintf(buf, sizeof(buf), decimals ? "%.1f" : "%.0f", f);
+              return buf;
+            };
+            line = number(id(desk_temp), 1) + "^ " + number(id(desk_rh), 0) + "%";
+          }
+          con = lv_color_hex(id(is_night)() ? 0x808080 : 0xFFFFFF);
+          coff = lv_color_hex(0x101010);
+          if (!line.empty()) {
+            const float p = 4.2f;
+            int cols = width(line, false);
+            text(line, false, 120 - cols * p / 2 + p / 2, 172 - 2 * p, p, 1.8f);
+          }
+          if (id(standby_music_enabled) && id(standby_state)=="playing" && !id(standby_title).empty() && !id(timer_running)) {
+            con=lv_color_hex(ON[ci]);coff=lv_color_hex(OFF[ci]);
+            auto music_line = [&](std::string v,int y) {
+              for(char &c:v){c=toupper((unsigned char)c);if(!find(c,false))c='?';}
+              if(v.size()>14){uint32_t elapsed=millis()-id(ui_scroll_ms);int off=elapsed<1800?0:((elapsed-1800)/300)%(v.size()+3);v=(v+"   "+v).substr(off,14);}
+              int cols=width(v,false);float p=std::min(3.0f,180.0f/std::max(1,cols));
+              text(v,false,120-cols*p/2+p/2,y,p,p*0.40f);
+            };
+            music_line(id(standby_title),160);music_line(id(standby_artist),180);
+          }
+          if (!id(nq_title).empty()) {
+            std::string v=std::to_string(id(nq_title).size())+" ALERT";con=lv_color_hex(ON[ci]);
+            int cols=width(v,false);text(v,false,120-cols*2.5f/2+1.25f,207,2.5f,1.0f);
+          }
+          if ((int32_t)(id(clock_brightness_until)-millis())>0) {
+            std::string v=std::to_string((int)roundf(id(gs_target_brightness)*100))+"%";con=lv_color_hex(ON[ci]);
+            int cols=width(v,false);text(v,false,120-cols*3.0f/2+1.5f,187,3.0f,1.2f);
+          }
+          lv_obj_invalidate(cv);
+
+  - id: update_hint
+    then:
+      - script.execute: draw_dot_clock
+
+  - id: update_now_playing
+    then:
+      - script.execute: draw_dot_clock
+
+  - id: draw_wheel
+    then:
+      - lambda: |-
+          lv_obj_t *cv = id(color_wheel);
+          if (cv == nullptr) return;
+          lv_draw_buf_t *buf = lv_canvas_get_draw_buf(cv);
+          if (buf == nullptr || buf->data == nullptr) return;
+          const auto cf = buf->header.cf;
+          if (cf != LV_COLOR_FORMAT_RGB565 && cf != LV_COLOR_FORMAT_ARGB8888) return;
+          const int bw = static_cast<int>(buf->header.w), bh = static_cast<int>(buf->header.h);
+          const uint32_t stride = buf->header.stride;
+          const bool frame_night = id(is_night)();
+          auto put_pixel = [&](int x, int y, lv_color_t color, lv_opa_t alpha) {
+            if (x < 0 || y < 0 || x >= bw || y >= bh) return;
+            if (frame_night) color = lv_color_make(std::max({color.red,color.green,color.blue}),0,0);
+            uint8_t *row = buf->data + static_cast<size_t>(y) * stride;
+            if (cf == LV_COLOR_FORMAT_RGB565) {
+              const uint16_t rgb = ((uint16_t)(color.red >> 3) << 11) |
+                                   ((uint16_t)(color.green >> 2) << 5) | (color.blue >> 3);
+              memcpy(row + x * 2, &rgb, sizeof(rgb));
+            } else {
+              uint8_t *pixel = row + x * 4;
+              pixel[0] = color.blue; pixel[1] = color.green; pixel[2] = color.red; pixel[3] = alpha;
+            }
+          };
+
+          lv_canvas_fill_bg(cv, lv_color_hex(0x000000), LV_OPA_TRANSP);
+          const float R = 70.0f, C = 69.5f;
+          for (int y = 0; y < 140; y++) {
+            for (int x = 0; x < 140; x++) {
+              float dx = x - C, dy = y - C;
+              float r = sqrtf(dx * dx + dy * dy);
+              if (r > R) continue;
+              float hue = atan2f(dy, dx) * 57.29578f + 90.0f;
+              if (hue < 0) hue += 360.0f;
+              if (hue >= 360.0f) hue -= 360.0f;
+              lv_color_t c = lv_color_hsv_to_rgb((uint16_t) hue, (uint8_t) (r / R * 100.0f), 100);
+              lv_opa_t o = (r > R - 1.0f) ? (lv_opa_t) ((R - r) * 255.0f) : LV_OPA_COVER;
+              put_pixel(x, y, c, o);
+            }
+          }
+          lv_obj_invalidate(cv);
+
+  # Read the finger position on the wheel and preview the color
+
+  - id: wheel_pick
+    then:
+      - lambda: |-
+          lv_indev_t *indev = lv_indev_active();
+          if (indev == nullptr) return;
+          lv_point_t p;
+          lv_indev_get_point(indev, &p);
+          lv_area_t a;
+          lv_obj_get_coords(id(color_wheel), &a);
+          float dx = p.x - (a.x1 + 69.5f), dy = p.y - (a.y1 + 69.5f);
+          float r = sqrtf(dx * dx + dy * dy);
+          if (r > 70.0f) r = 70.0f;
+          float hue = atan2f(dy, dx) * 57.29578f + 90.0f;
+          if (hue < 0) hue += 360.0f;
+          if (hue >= 360.0f) hue -= 360.0f;
+          lv_color_t c = lv_color_hsv_to_rgb((uint16_t) hue, (uint8_t) (r / 70.0f * 100.0f), 100);
+          id(wheel_rgb) = (int) (lv_color_to_u32(c) & 0xFFFFFF);
+          lv_obj_set_style_bg_color(id(colors_close), c, LV_PART_MAIN);
+
+  # Advance: standby -> first picked screen -> ... -> last -> standby
+  - id: go_next
+    then:
+      - lambda: |-
+          int cur = id(cur_slot);
+          int next = -1;
+          if (cur < 6) {
+            for (int i = cur + 1; i < 6; i++) {
+              if (!id(slot_eid)[i].empty()) { next = i; break; }
+            }
+            if (next < 0 && id(show_pizza).state) next = 6;
+          }
+          id(cur_slot) = next;
+      - script.execute: show_current
+
+  - id: show_current
+    then:
+      - lambda: id(clock_brightness_until) = 0;
+      - lambda: |-
+          id(overlay) = 0;
+          id(ui_view) = id(cur_slot) >= 0 && id(cur_slot) < 6 ? 2 : 0;
+          id(ui_scroll_ms) = millis();
+          id(ui_scroll_tick) = -1;
+      - if:
+          condition:
+            lambda: return id(cur_slot) == 6;
+          then:
+            - lvgl.page.show: pizza_page
+          else:
+            - if:
+                condition:
+                  lambda: return id(cur_slot) < 0;
+                then:
+                  - lvgl.page.show: standby_page
+                else:
+                  - lvgl.page.show: dashboard_page
+                  - script.execute: ui_render
+      - script.execute: update_hint
+      - script.execute: ui_render
+
+  # Update only the currently visible canvas.
+  - id: fill_current
+    then:
+      - script.execute: ui_render
+
+  # --- Home Assistant actions ---
+  - id: ha_rgb
+    parameters:
+      rgb: int
+    then:
+      - script.execute:
+          id: ui_command
+          slot: !lambda return id(cur_slot);
+          kind: 7
+          value: !lambda return static_cast<float>(rgb);
+          option: ""
+  - id: ha_kelvin
+    parameters:
+      kelvin: int
+      preview: int
+    then:
+      - script.execute:
+          id: ui_command
+          slot: !lambda return id(cur_slot);
+          kind: 8
+          value: !lambda |-
+            int s=id(cur_slot);
+            if(s<0||s>=6)return 0.0f;
+            return static_cast<float>(std::max(id(slot_kelvin_min)[s],std::min(id(slot_kelvin_max)[s],kelvin)));
+          option: ""
+  # Pizza screen: work out which slice the finger is on
+  - id: pizza_hit
+    then:
+      - script.execute: ui_render
+
+  - id: pizza_clear
+    then:
+      - lambda: id(pizza_sel) = -1;
+      - script.execute: ui_render
+
+  - id: pizza_fire
+    then:
+      - if:
+          condition:
+            lambda: return id(pizza_sel) >= 0;
+          then:
+            - homeassistant.event:
+                event: esphome.pixizhi_pizza
+                data:
+                  node: ${name}
+                  slice: !lambda return esphome::to_string(id(pizza_sel) + 1);
+
+  # LED notification: flash, then put the LED back the way it was
+  - id: flash_led
+    mode: restart
+    parameters:
+      rgb: int
+      count: int
+      on_ms: int
+      off_ms: int
+    then:
+      - lambda: |-
+          if (!id(led_flashing)) id(led_saved) = id(led).remote_values;
+          id(led_flashing) = true;
+      - repeat:
+          count: !lambda |-
+            return count < 1 ? 1 : count;
+          then:
+            - light.turn_on:
+                id: led
+                brightness: 100%
+                red: !lambda return ((rgb >> 16) & 0xFF) / 255.0f;
+                green: !lambda return ((rgb >> 8) & 0xFF) / 255.0f;
+                blue: !lambda return (rgb & 0xFF) / 255.0f;
+                transition_length: 0s
+            - delay: !lambda return on_ms;
+            - light.turn_off:
+                id: led
+                transition_length: 0s
+            - delay: !lambda return off_ms;
+      - lambda: |-
+          auto &v = id(led_saved);
+          auto call = id(led).make_call();
+          call.set_transition_length(0);
+          if (v.is_on()) {
+            call.set_state(true);
+            call.set_brightness(v.get_brightness());
+            call.set_rgb(v.get_red(), v.get_green(), v.get_blue());
+          } else {
+            call.set_state(false);
+          }
+          call.perform();
+          id(led_flashing) = false;
+
+  # ---------------- CHIME ----------------
+  - id: play_chime
+    then:
+      - if:
+          condition:
+            lambda: return !id(siren).state;
+          then:
+            - media_player.repeat_off: ball_media_player
+            - media_player.play_media:
+                id: ball_media_player
+                media_url: "audio-file://chime_sound"
+
+  # wake the screen for an alert
+  - id: wake_screen
+    then:
+      - lambda: |-
+          id(bl_dimmed) = false;
+          id(apply_backlight).execute();
+          lv_display_trigger_activity(nullptr);
+
+  # ---------------- NOTIFICATIONS ----------------
+  - id: update_badge
+    then:
+      - script.execute: draw_dot_clock
+
+  - id: notif_led
+    then:
+      - lambda: |-
+          if (id(siren).state || id(led_flashing)) return;
+          if (id(nq_title).empty()) {
+            if (id(notif_led_on)) {
+              auto call = id(led).turn_off();
+              call.perform();
+              id(notif_led_on) = false;
+            }
+            return;
+          }
+          bool urg = false;
+          for (bool u : id(nq_urgent)) urg |= u;
+          uint32_t c = urg ? 0xFF0000 : id(nq_color).back();
+          auto call = id(led).turn_on();
+          call.set_rgb(((c >> 16) & 0xFF) / 255.0f, ((c >> 8) & 0xFF) / 255.0f, (c & 0xFF) / 255.0f);
+          call.set_brightness(urg ? 1.0f : 0.6f);
+          call.set_effect(urg ? "Fast Pulse" : "None");
+          call.perform();
+          id(notif_led_on) = true;
+
+  - id: open_notifications
+    then:
+      - if:
+          condition:
+            lambda: return !id(nq_title).empty();
+          then:
+            - lambda: id(overlay) = 1; id(notification_line) = 0;
+            - script.execute: notif_fill
+            - lvgl.page.show:
+                id: notif_page
+                animation: FADE_IN
+                time: 150ms
+
+  - id: notif_fill
+    then:
+      - script.execute: ui_render
+
+  - id: notif_dismiss
+    parameters:
+      held: bool
+    then:
+      - lambda: |-
+          if (id(nq_title).empty()) return;
+          if (id(nq_urgent)[0] && !held) return;
+          id(nq_title).erase(id(nq_title).begin());
+          id(nq_msg).erase(id(nq_msg).begin());
+          id(nq_icon).erase(id(nq_icon).begin());
+          id(nq_color).erase(id(nq_color).begin());
+          id(nq_urgent).erase(id(nq_urgent).begin());
+          id(nq_time).erase(id(nq_time).begin());
+      - if:
+          condition:
+            lambda: return id(nq_title).empty();
+          then:
+            - script.execute: notif_closed
+          else:
+            - script.execute: notif_fill
+            - script.execute: update_badge
+            - script.execute: notif_led
+
+  - id: notif_closed
+    then:
+      - script.execute: update_badge
+      - script.execute: notif_led
+      - if:
+          condition:
+            lambda: return id(overlay) == 1;
+          then:
+            - lambda: id(cur_slot) = -1;
+            - script.execute: show_current
+
+  # urgent: wake up, show it, chime every minute until dismissed
+  - id: urgent_loop
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: |-
+              for (bool u : id(nq_urgent)) if (u) return true;
+              return false;
+          then:
+            - script.execute: wake_screen
+            - if:
+                condition:
+                  lambda: return id(overlay) != 1;
+                then:
+                  - script.execute: open_notifications
+            - script.execute: play_chime
+            - delay: 60s
+
+  # ---------------- KITCHEN TIMER ----------------
+  - id: open_timer
+    then:
+      - lambda: |-
+          id(overlay) = 2;
+          if (!id(timer_running) && !id(timer_done) && id(timer_left) <= 0) id(timer_left) = id(timer_set_min) * 60;
+      - script.execute: timer_ui
+      - lvgl.page.show:
+          id: timer_page
+          animation: FADE_IN
+          time: 150ms
+
+  - id: timer_ui
+    then:
+      - script.execute: ui_render
+
+  - id: timer_main
+    then:
+      - if:
+          condition:
+            lambda: return id(timer_done);
+          then:
+            - script.execute: timer_reset
+          else:
+            - lambda: |-
+                if (id(timer_running)) id(timer_running) = false;
+                else if (id(timer_left) > 0) id(timer_running) = true;
+            - script.execute: timer_ui
+            - script.execute: update_clock
+
+  - id: timer_reset
+    then:
+      - script.stop: timer_alarm
+      - lambda: |-
+          bool was_done = id(timer_done);
+          id(timer_running) = false;
+          id(timer_done) = false;
+          id(timer_left) = id(timer_set_min) * 60;
+          if (was_done && !id(nq_title).empty()) id(notif_led).execute();
+          else if (was_done) { auto call = id(led).turn_off(); call.perform(); }
+      - if:
+          condition:
+            lambda: return !id(siren).state;
+          then:
+            - media_player.stop: ball_media_player
+      - script.execute: timer_ui
+      - script.execute: update_clock
+
+  - id: timer_alarm
+    mode: restart
+    then:
+      - homeassistant.event:
+          event: esphome.pixizhi_timer_done
+      - script.execute: wake_screen
+      - script.execute: open_timer
+      - light.turn_on:
+          id: led
+          brightness: 100%
+          red: 11%
+          green: 100%
+          blue: 33%
+          effect: Fast Pulse
+      - repeat:
+          count: 12
+          then:
+            - if:
+                condition:
+                  lambda: return id(timer_done);
+                then:
+                  - script.execute: play_chime
+            - delay: 5s
+      - if:
+          condition:
+            lambda: return id(timer_done);
+          then:
+            - script.execute: timer_reset
+
+  # Keep this separate from audio routing: disabling the diagnostic switch
+  # resumes display rendering without stopping or restarting playback.
+  - id: audio_display_policy
+    then:
+      - lambda: |-
+          if (!id(ui_ready)) return;
+          const bool audio_active = !id(box_speaker).is_stopped() ||
+              id(ball_media_player).state == media_player::MEDIA_PLAYER_STATE_PLAYING;
+          const bool pause = id(pause_display_during_audio).state && audio_active && !id(sendspin_pairing_visible);
+          if (pause) {
+            // Touch input can wake LVGL; reassert only this optional test policy.
+            if (!id(lvgl_comp).is_paused()) id(lvgl_comp).set_paused(true, false);
+            id(audio_display_paused) = true;
+          } else if (id(audio_display_paused)) {
+            id(lvgl_comp).set_paused(false, false);
+            id(audio_display_paused) = false;
+            id(ui_frame_dirty) = true;
+            id(clock_frame_dirty) = true;
+            lv_obj_invalidate(lv_screen_active());
+          }
+
+  # Safety stop: the siren switches itself off after "Siren Max Duration"
+  - id: siren_timeout
+    mode: restart
+    then:
+      - delay: !lambda return (uint32_t) (id(siren_max_duration).state * 1000);
+      - switch.turn_off: siren
+
+
+interval:
+  - interval: 250ms
+    then:
+      - script.execute: audio_display_policy
+  - interval: 250ms
+    then:
+      - lambda: |-
+          static uint32_t waiting_since = 0;
+          const bool selected_usb = id(audio_output).active_index().value_or(0) == 1;
+          const bool pending_audio = !id(usb_speaker).is_stopped() ||
+            id(media_mixer_input).has_buffered_data() || id(announcement_mixer_input).has_buffered_data();
+          if (!id(ui_ready) || !id(usb_audio_fallback).state || !selected_usb ||
+              !pending_audio || id(usb_speaker).is_running()) {
+            waiting_since = 0;
+            return;
+          }
+          const uint32_t now = millis();
+          if (waiting_since == 0) { waiting_since = now; return; }
+          if ((uint32_t)(now - waiting_since) < 3000) return;
+          waiting_since = 0;
+          ESP_LOGW("audio_route", "USB speaker not running after 3 seconds; selecting internal speaker");
+          id(ui_message) = "USB NOT READY";
+          id(ui_message_until) = now + 2500;
+          id(ui_render).execute();
+          auto call = id(audio_output).make_call();
+          call.set_index(0);
+          call.perform();
+  - interval: 50ms
+    then:
+      - lambda: |-
+          if (!id(ui_ready) || id(overlay)>2 || id(audio_display_paused)) return;
+          // Keep the newest dirty frame; coalesce intermediate audio-time updates.
+          static uint32_t last_frame = 0;
+          const uint32_t now = millis();
+          const bool audio_active = !id(box_speaker).is_stopped() ||
+              id(ball_media_player).state == media_player::MEDIA_PLAYER_STATE_PLAYING;
+          if (audio_active && (uint32_t)(now - last_frame) < 100) return;
+          last_frame = now;
+          if (id(ui_view) != 0 || id(overlay)==1 || id(overlay)==2 || id(cur_slot)==6) {
+            if (id(ui_frame_dirty)) {
+              id(ui_frame_dirty) = false;
+              id(ui_paint_frame).execute();
+            }
+          } else if (id(cur_slot) < 0 && id(clock_frame_dirty)) {
+            id(clock_frame_dirty) = false;
+            id(clock_paint_frame).execute();
+          }
+  - interval: 200ms
+    then:
+      - lambda: |-
+          if(!id(ui_ready))return;
+          uint32_t now=millis();bool repaint=false;
+          if(id(ui_view)==0 && id(cur_slot)<0 && id(overlay)==0 && id(standby_music_enabled) && id(standby_state)=="playing") id(draw_dot_clock).execute();
+          for(int s=0;s<6;s++) {
+            if(id(slot_temp_due)[s] && (int32_t)(now-id(slot_temp_due)[s])>=0) {
+              id(slot_temp_due)[s]=0;id(ui_command).execute(s,4,id(slot_expected)[s],"");
+            }
+            if(id(slot_pending)[s] && (uint32_t)(now-id(slot_command_ms)[s])>7000) {
+              id(slot_pending)[s]=0;id(ui_message)="NO CONFIRMATION";id(ui_message_until)=now+2500;repaint=true;
+            }
+          }
+          if(id(ui_message_until) && (int32_t)(now-id(ui_message_until))>=0) {id(ui_message_until)=0;id(ui_message)="";repaint=true;}
+          if(id(ui_view)!=0 && id(overlay)==0 && !id(gs_touch_active)) {
+            int tick=(now-id(ui_scroll_ms))/220;
+            // Only redraw a changing marquee, not every idle page.
+            int s=id(cur_slot);bool scroll=id(ui_view)==7 || (id(ui_view)==2&&s>=0&&s<6&&id(slot_eid)[s].rfind("media_player.",0)==0 && (id(slot_title)[s].size()>15||id(slot_artist)[s].size()>15));
+            if(scroll&&tick!=id(ui_scroll_tick)){id(ui_scroll_tick)=tick;repaint=true;}
+            static uint32_t music_frame=0;
+            if(id(ui_view)==2&&s>=0&&s<6&&id(slot_eid)[s].rfind("media_player.",0)==0&&id(slot_state)[s]=="playing"&&now/400!=music_frame){music_frame=now/400;repaint=true;}
+            static uint32_t last_status=0;if(now-last_status>5000){last_status=now;repaint=true;}
+            if(repaint)id(ui_render).execute();
+          }
+  - interval: 250ms
+    then:
+      - lambda: |-
+          if (!id(ui_ready) || id(ui_view) != 0 || id(cur_slot) >= 0 || id(overlay) != 0 || id(gs_touch_active)) return;
+          bool redraw = false;
+          uint32_t now = millis();
+          if ((uint32_t)(now - id(status_last_ms)) >= (uint32_t)id(status_seconds) * 1000) {
+            id(status_last_ms) = now;
+            // -1 is weather; each active status gets a turn, then weather returns.
+            std::vector<int> active;
+            for(int i=0;i<6;i++)if(id(status_active)[i])active.push_back(i);
+            std::stable_sort(active.begin(),active.end(),[&](int a,int b){return id(status_priority)[a]>id(status_priority)[b];});
+            int next=-1;
+            if(id(status_row)<0){if(!active.empty())next=active.front();}
+            else for(size_t j=0;j+1<active.size();j++)if(active[j]==id(status_row)){next=active[j+1];break;}
+            id(status_row)=next;
+            redraw = true;
+          }
+          if (id(status_row) >= 0 && !id(status_active)[id(status_row)]) {
+            id(status_row) = -1;
+            redraw = true;
+          }
+          // Four small weather frames over two seconds, once every 90 seconds.
+          uint32_t phase = now % 90000;
+          int frame = id(weather_animate) && !id(is_night)() && id(status_row) < 0 && phase < 2000
+                      ? (int)(phase / 500) : 0;
+          if (frame != id(weather_frame)) { id(weather_frame) = frame; redraw = true; }
+          if (redraw) id(draw_dot_clock).execute();
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (id(ui_ready) && id(night_active) != id(is_night)()) id(apply_standby_style).execute();
+      - if:
+          condition:
+            lambda: return id(timer_running);
+          then:
+            - lambda: |-
+                id(timer_left)--;
+                if (id(timer_left) <= 0) {
+                  id(timer_left) = 0;
+                  id(timer_running) = false;
+                  id(timer_done) = true;
+                }
+                if (id(overlay) == 2) id(timer_ui).execute();
+                if (id(overlay) == 0 && id(cur_slot) < 0)
+                  id(draw_dot_clock).execute();
+            - if:
+                condition:
+                  lambda: return id(timer_done);
+                then:
+                  - script.execute: timer_alarm
+                  - script.execute: update_clock
+  - interval: 600ms
+    then:
+      - lambda: |-
+          if (id(overlay) != 1 || id(nq_title).empty() || !id(nq_urgent)[0]) return;
+          id(pulse_phase) = !id(pulse_phase);
+          id(ui_render).execute();
+
+# --- USER INTERFACE (LVGL) ------------------------------------------------------
+lvgl:
+  id: lvgl_comp
+  displays:
+    - main_display
+  touchscreens:
+    - my_touchscreen
+  buffer_size: 25%
+  bg_color: 0x000000
+  text_color: 0xFFFFFF
+  default_font: pixel_small
+
+  on_idle:
+    timeout: !lambda return (uint32_t) (id(screen_timeout).state * 1000);
+    then:
+      - if:
+          condition:
+            lambda: return !id(sendspin_pairing_visible) && !id(gs_touch_active) && !id(bl_dimmed) && !(id(overlay) == 1 && !id(nq_urgent).empty() && id(nq_urgent)[0]) && !id(timer_done);
+          then:
+            - lambda: |-
+                id(cur_slot) = -1;
+                id(overlay) = 0;
+                id(bl_dimmed) = true;
+            - script.execute: show_current
+            - script.execute: apply_backlight
+
+  style_definitions:
+    - id: big_arc
+      arc_width: 14
+      arc_rounded: true
+    - id: nav_zone
+      bg_color: 0x202020
+      bg_opa: 80%
+      radius: 16
+      border_width: 0
+      shadow_width: 0
+    - id: swatch
+      width: 26
+      height: 26
+      radius: 13
+      border_width: 1
+      border_color: 0x808080
+      shadow_width: 0
+      pad_all: 0
+
+  # Modal above every page; underlying navigation is suppressed while visible.
+  top_layer:
+    widgets:
+      - obj:
+          id: pairing_card
+          hidden: true
+          align: CENTER
+          width: 240
+          height: 240
+          bg_color: 0x000000
+          bg_opa: COVER
+          border_width: 0
+          pad_all: 0
+          radius: 0
+          scrollable: false
+          clickable: true
+          widgets:
+            - label:
+                id: pairing_heading
+                align: CENTER
+                y: -65
+                text: SENDSPIN PAIR
+                text_font: pixel_medium
+                text_color: 0xFFFFFF
+            - label:
+                id: pairing_digits
+                align: CENTER
+                y: -12
+                text: ""
+                text_font: pixel_large
+                text_color: 0xFFFFFF
+            - label:
+                id: pairing_hint
+                align: CENTER
+                y: 29
+                text: Enter in Music Assistant
+                text_font: pixel_small
+                text_color: 0xC0C0C0
+            - button:
+                align: CENTER
+                x: -46
+                y: 74
+                width: 80
+                height: 34
+                radius: 17
+                bg_color: 0x303030
+                widgets:
+                  - label:
+                      align: CENTER
+                      text: ALLOW
+                      text_font: pixel_small
+                on_click:
+                  - sendspin.confirm_pairing_window: sendspin_hub
+            - button:
+                align: CENTER
+                x: 46
+                y: 74
+                width: 80
+                height: 34
+                radius: 17
+                bg_color: 0x303030
+                widgets:
+                  - label:
+                      align: CENTER
+                      text: HIDE
+                      text_font: pixel_small
+                on_click:
+                  - lambda: |-
+                      lv_obj_add_flag(id(pairing_card), LV_OBJ_FLAG_HIDDEN);
+                      id(sendspin_pairing_visible) = false;
+                      // Hiding the code does not authorize or cancel pairing.
+
+  pages:
+    - id: dashboard_page
+      bg_color: 0x000000
+      scrollable: false
+      widgets:
+        - canvas:
+            id: ui_canvas
+            align: CENTER
+            width: 240
+            height: 240
+            transparent: false
+            clickable: false
+    # ---------------- STANDBY ----------------
+    - id: standby_page
+      bg_color: 0x000000
+      scrollable: false
+      widgets:
+        - canvas:
+            id: dm_canvas
+            align: CENTER
+            width: 240
+            height: 240
+            transparent: false
+            clickable: false
+
+    - id: colors_page
+      bg_color: 0x000000
+      scrollable: false
+      widgets:
+        - canvas:
+            id: color_wheel
+            align: CENTER
+            width: 140
+            height: 140
+            transparent: true
+            clickable: true
+            on_press:
+              - script.execute: wheel_pick
+            on_pressing:
+              - script.execute: wheel_pick
+            on_release:
+              - script.execute:
+                  id: ha_rgb
+                  rgb: !lambda return id(wheel_rgb);
+        - button:
+            id: colors_close
+            align: CENTER
+            width: 46
+            height: 46
+            radius: 23
+            bg_color: 0xFFFFFF
+            border_width: 2
+            border_color: 0x000000
+            shadow_width: 0
+            widgets:
+              - label:
+                  id: colors_close_icon
+                  align: CENTER
+                  text: "\uF00D"
+                  text_font: pixel_small
+                  text_color: 0x111111
+            on_click:
+              - lambda: id(ui_view) = 2;
+              - lvgl.page.show: dashboard_page
+              - script.execute: ui_render
+        - button:
+            id: white_preset_0
+            align: CENTER
+            x: 0
+            y: -52
+            width: 48
+            height: 48
+            radius: 24
+            bg_color: 0xFFB46B
+            border_width: 2
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "WARM"
+                  text_font: pixel_small
+                  text_color: 0x111111
+            on_click:
+              - script.execute: { id: ha_kelvin, kelvin: 2700, preview: 0xFFB46B }
+        - button:
+            id: white_preset_1
+            align: CENTER
+            x: 45
+            y: 26
+            width: 48
+            height: 48
+            radius: 24
+            bg_color: 0xFFE2BD
+            border_width: 2
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "NEUTRAL"
+                  text_font: pixel_small
+                  text_color: 0x111111
+            on_click:
+              - script.execute: { id: ha_kelvin, kelvin: 4000, preview: 0xFFE2BD }
+        - button:
+            id: white_preset_2
+            align: CENTER
+            x: -45
+            y: 26
+            width: 48
+            height: 48
+            radius: 24
+            bg_color: 0xE6EEFF
+            border_width: 2
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "COOL"
+                  text_font: pixel_small
+                  text_color: 0x111111
+            on_click:
+              - script.execute: { id: ha_kelvin, kelvin: 6500, preview: 0xE6EEFF }
+        - button:
+            id: hue_preset_0
+            align: CENTER
+            x: 0
+            y: -104
+            width: 26
+            height: 26
+            radius: 13
+            bg_color: 0xFF2A2A
+            border_width: 1
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            on_click:
+              - script.execute: { id: ha_rgb, rgb: 0xFF2A2A }
+        - button:
+            id: hue_preset_1
+            align: CENTER
+            x: 52
+            y: -90
+            width: 26
+            height: 26
+            radius: 13
+            bg_color: 0xFF7A1A
+            border_width: 1
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            on_click:
+              - script.execute: { id: ha_rgb, rgb: 0xFF7A1A }
+        - button:
+            id: hue_preset_2
+            align: CENTER
+            x: 90
+            y: -52
+            width: 26
+            height: 26
+            radius: 13
+            bg_color: 0xFFE81A
+            border_width: 1
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            on_click:
+              - script.execute: { id: ha_rgb, rgb: 0xFFE81A }
+        - button:
+            id: hue_preset_3
+            align: CENTER
+            x: 104
+            y: 0
+            width: 26
+            height: 26
+            radius: 13
+            bg_color: 0xA8FF1A
+            border_width: 1
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            on_click:
+              - script.execute: { id: ha_rgb, rgb: 0xA8FF1A }
+        - button:
+            id: hue_preset_4
+            align: CENTER
+            x: 90
+            y: 52
+            width: 26
+            height: 26
+            radius: 13
+            bg_color: 0x2EE65C
+            border_width: 1
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            on_click:
+              - script.execute: { id: ha_rgb, rgb: 0x2EE65C }
+        - button:
+            id: hue_preset_5
+            align: CENTER
+            x: 52
+            y: 90
+            width: 26
+            height: 26
+            radius: 13
+            bg_color: 0x1AE6B0
+            border_width: 1
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            on_click:
+              - script.execute: { id: ha_rgb, rgb: 0x1AE6B0 }
+        - button:
+            id: hue_preset_6
+            align: CENTER
+            x: 0
+            y: 104
+            width: 26
+            height: 26
+            radius: 13
+            bg_color: 0x1AD9FF
+            border_width: 1
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            on_click:
+              - script.execute: { id: ha_rgb, rgb: 0x1AD9FF }
+        - button:
+            id: hue_preset_7
+            align: CENTER
+            x: -52
+            y: 90
+            width: 26
+            height: 26
+            radius: 13
+            bg_color: 0x2A5CFF
+            border_width: 1
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            on_click:
+              - script.execute: { id: ha_rgb, rgb: 0x2A5CFF }
+        - button:
+            id: hue_preset_8
+            align: CENTER
+            x: -90
+            y: 52
+            width: 26
+            height: 26
+            radius: 13
+            bg_color: 0x5A3AFF
+            border_width: 1
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            on_click:
+              - script.execute: { id: ha_rgb, rgb: 0x5A3AFF }
+        - button:
+            id: hue_preset_9
+            align: CENTER
+            x: -104
+            y: 0
+            width: 26
+            height: 26
+            radius: 13
+            bg_color: 0x9A3AFF
+            border_width: 1
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            on_click:
+              - script.execute: { id: ha_rgb, rgb: 0x9A3AFF }
+        - button:
+            id: hue_preset_10
+            align: CENTER
+            x: -90
+            y: -52
+            width: 26
+            height: 26
+            radius: 13
+            bg_color: 0xE62AE6
+            border_width: 1
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            on_click:
+              - script.execute: { id: ha_rgb, rgb: 0xE62AE6 }
+        - button:
+            id: hue_preset_11
+            align: CENTER
+            x: -52
+            y: -90
+            width: 26
+            height: 26
+            radius: 13
+            bg_color: 0xFF4FA0
+            border_width: 1
+            border_color: 0x000000
+            shadow_width: 0
+            pad_all: 0
+            ext_click_area: 4
+            on_click:
+              - script.execute: { id: ha_rgb, rgb: 0xFF4FA0 }
+
+    # ---------------- THERMOSTAT ----------------
+    # ---------------- PIZZA BUTTONS ----------------
+    - id: pizza_page
+      bg_color: 0x000000
+      scrollable: false
+      widgets:
+        - canvas:
+            id: pizza_canvas
+            align: CENTER
+            width: 240
+            height: 240
+            transparent: false
+            clickable: false
+
+    - id: notif_page
+      bg_color: 0x000000
+      scrollable: false
+      widgets:
+        - canvas:
+            id: notif_canvas
+            align: CENTER
+            width: 240
+            height: 240
+            transparent: false
+            clickable: false
+
+    - id: timer_page
+      bg_color: 0x000000
+      scrollable: false
+      widgets:
+        - canvas:
+            id: timer_canvas
+            align: CENTER
+            width: 240
+            height: 240
+            transparent: false
+            clickable: false
+

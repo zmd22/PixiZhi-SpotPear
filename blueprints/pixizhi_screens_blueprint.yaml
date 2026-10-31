@@ -1,0 +1,1274 @@
+blueprint:
+  name: PixiZhi SpotPear Pixel Control v9 — apartment controller
+  description: >-
+    Pick up to 6 lights, switches, media players or thermostats to show on the PixiZhi SpotPear,
+    plus the weather entity for the standby screen.
+    The order you pick them in is the order the screens appear in.
+    Needs "Allow the device to perform Home Assistant actions" turned on in the
+    PixiZhi SpotPear's ESPHome device settings.
+  domain: automation
+  author: PixiZhi SpotPear contributors
+  input:
+    control_interface:
+      name: Pixel control interface
+      icon: mdi:gesture-tap
+      collapsed: true
+      input:
+        navigation_mode:
+          name: Swipe behavior
+          description: Built-in navigation is recommended. Additional actions run alongside navigation. Custom replaces navigation; disabled still reports gestures.
+          default: builtin
+          selector:
+            select:
+              options:
+                - label: Built-in navigation
+                  value: builtin
+                - label: Built-in plus custom actions
+                  value: additional
+                - label: Custom actions only
+                  value: custom
+                - label: Disabled (report only)
+                  value: disabled
+        music_volume_limit:
+          name: Maximum volume from the dial
+          default: 65
+          selector:
+            number:
+              min: 5
+              max: 100
+              unit_of_measurement: "%"
+              mode: slider
+        screen_labels:
+          name: Optional short names, in screen order
+          description: Comma-separated names matching your selected screens. Blank positions use the HA friendly name. Example Living, Bedroom, Music, Living heat, Bedroom heat.
+          default: ""
+          selector:
+            text: {}
+    screens:
+      name: Favorite controls (up to 6, in order)
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain:
+                - light
+                - switch
+                - media_player
+                - climate
+    standby_temperature:
+      name: Standby temperature sensor
+      description: Shown below the clock when music is not playing or main-clock music information is disabled.
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: temperature
+    standby_humidity:
+      name: Standby humidity sensor
+      description: Shown alongside temperature when music is not playing.
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: humidity
+    show_standby_music:
+      name: Show music information on the main clock
+      description: When enabled, playing music replaces temperature/humidity and uses the selected Clock Color. Disable to keep climate readings on the matrix clock during playback.
+      default: true
+      selector:
+        boolean: {}
+    standby_player:
+      name: Standby music player
+      description: Player shown below the clock. Requires the matching updated PixiZhi SpotPear firmware.
+      selector:
+        entity:
+          filter:
+            - domain: media_player
+    weather:
+      name: Weather (standby screen)
+      selector:
+        entity:
+          filter:
+            - domain: weather
+    standby_status:
+      name: Standby weather and status line
+      description: >-
+        Weather alternates with active status slots on the matrix clock.
+        Each slot uses the first selected entity (leave empty to disable).
+        States are refreshed every 15 seconds. Use short ASCII labels, up to 12 characters.
+      icon: mdi:dots-horizontal
+      collapsed: true
+      input:
+        status_interval:
+          name: Seconds per weather/status item
+          default: 5
+          selector:
+            number:
+              min: 3
+              max: 15
+              mode: slider
+        weather_animation:
+          name: Occasional weather pixel animation
+          description: Brief animation every 90 seconds while weather is visible; disabled at night.
+          default: true
+          selector:
+            boolean: {}
+    status_1_section:
+      name: Status 1
+      icon: mdi:information-outline
+      collapsed: true
+      input:
+        status_1_entity:
+          name: Entity to watch (select one, or leave empty)
+          default: []
+          selector:
+            entity:
+              multiple: true
+        status_1_source:
+          name: Match against
+          default: state
+          selector:
+            select:
+              options:
+                - label: Entity state
+                  value: state
+                - label: Attribute
+                  value: attribute
+                - label: State AND attribute
+                  value: both
+        status_1_attribute:
+          name: Attribute name (for attribute matching)
+          description: "For example hvac_action, battery_low, or source. Leave empty for state-only matching."
+          default: ""
+          selector:
+            text: {}
+        status_1_attribute_values:
+          name: Show when attribute equals (comma-separated)
+          description: "Exact values; case-insensitive. Use true/false for boolean attributes. Both mode requires state AND attribute to match."
+          default: ""
+          selector:
+            text: {}
+        status_1_priority:
+          name: Priority (higher appears first)
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 10
+              mode: box
+        status_1_comparison:
+          name: Matching rule
+          description: Numeric rules apply to the state in State mode, and the selected attribute in Attribute or Both mode. Both also requires the configured state to match.
+          default: equals
+          selector:
+            select:
+              options: [equals, above, below]
+        status_1_threshold:
+          name: Numeric threshold (Above or Below)
+          default: 20
+          selector:
+            number:
+              min: -10000
+              max: 100000
+              step: 0.1
+              mode: box
+        status_1_show_value:
+          name: Show matched value in details
+          default: true
+          selector:
+            boolean: {}
+        status_1_target:
+          name: Open a configured control on tap (optional)
+          description: Entity ID from Favorite controls. Leave blank to run the custom action below.
+          default: ""
+          selector:
+            text: {}
+        status_1_tap_action:
+          name: Custom tap action
+          default: []
+          selector:
+            action: {}
+        status_1_states:
+          name: Show when state equals (comma-separated; State or Both mode)
+          default: "on,open,playing,home,armed_home,armed_away"
+          selector:
+            text: {}
+        status_1_label:
+          name: Short label
+          default: "STATUS 1"
+          selector:
+            text: {}
+        status_1_icon:
+          name: Pixel icon
+          default: alert
+          selector:
+            select:
+              options: [window, door, heating, lock, light, water, music, motion, battery, home, alert]
+    status_2_section:
+      name: Status 2
+      icon: mdi:information-outline
+      collapsed: true
+      input:
+        status_2_entity:
+          name: Entity to watch (select one, or leave empty)
+          default: []
+          selector:
+            entity:
+              multiple: true
+        status_2_source:
+          name: Match against
+          default: state
+          selector:
+            select:
+              options:
+                - label: Entity state
+                  value: state
+                - label: Attribute
+                  value: attribute
+                - label: State AND attribute
+                  value: both
+        status_2_attribute:
+          name: Attribute name (for attribute matching)
+          description: "For example hvac_action, battery_low, or source. Leave empty for state-only matching."
+          default: ""
+          selector:
+            text: {}
+        status_2_attribute_values:
+          name: Show when attribute equals (comma-separated)
+          description: "Exact values; case-insensitive. Use true/false for boolean attributes. Both mode requires state AND attribute to match."
+          default: ""
+          selector:
+            text: {}
+        status_2_priority:
+          name: Priority (higher appears first)
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 10
+              mode: box
+        status_2_comparison:
+          name: Matching rule
+          description: Numeric rules apply to the state in State mode, and the selected attribute in Attribute or Both mode. Both also requires the configured state to match.
+          default: equals
+          selector:
+            select:
+              options: [equals, above, below]
+        status_2_threshold:
+          name: Numeric threshold (Above or Below)
+          default: 20
+          selector:
+            number:
+              min: -10000
+              max: 100000
+              step: 0.1
+              mode: box
+        status_2_show_value:
+          name: Show matched value in details
+          default: true
+          selector:
+            boolean: {}
+        status_2_target:
+          name: Open a configured control on tap (optional)
+          description: Entity ID from Favorite controls. Leave blank to run the custom action below.
+          default: ""
+          selector:
+            text: {}
+        status_2_tap_action:
+          name: Custom tap action
+          default: []
+          selector:
+            action: {}
+        status_2_states:
+          name: Show when state equals (comma-separated; State or Both mode)
+          default: "on,open,playing,home,armed_home,armed_away"
+          selector:
+            text: {}
+        status_2_label:
+          name: Short label
+          default: "STATUS 2"
+          selector:
+            text: {}
+        status_2_icon:
+          name: Pixel icon
+          default: alert
+          selector:
+            select:
+              options: [window, door, heating, lock, light, water, music, motion, battery, home, alert]
+    status_3_section:
+      name: Status 3
+      icon: mdi:information-outline
+      collapsed: true
+      input:
+        status_3_entity:
+          name: Entity to watch (select one, or leave empty)
+          default: []
+          selector:
+            entity:
+              multiple: true
+        status_3_source:
+          name: Match against
+          default: state
+          selector:
+            select:
+              options:
+                - label: Entity state
+                  value: state
+                - label: Attribute
+                  value: attribute
+                - label: State AND attribute
+                  value: both
+        status_3_attribute:
+          name: Attribute name (for attribute matching)
+          description: "For example hvac_action, battery_low, or source. Leave empty for state-only matching."
+          default: ""
+          selector:
+            text: {}
+        status_3_attribute_values:
+          name: Show when attribute equals (comma-separated)
+          description: "Exact values; case-insensitive. Use true/false for boolean attributes. Both mode requires state AND attribute to match."
+          default: ""
+          selector:
+            text: {}
+        status_3_priority:
+          name: Priority (higher appears first)
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 10
+              mode: box
+        status_3_comparison:
+          name: Matching rule
+          description: Numeric rules apply to the state in State mode, and the selected attribute in Attribute or Both mode. Both also requires the configured state to match.
+          default: equals
+          selector:
+            select:
+              options: [equals, above, below]
+        status_3_threshold:
+          name: Numeric threshold (Above or Below)
+          default: 20
+          selector:
+            number:
+              min: -10000
+              max: 100000
+              step: 0.1
+              mode: box
+        status_3_show_value:
+          name: Show matched value in details
+          default: true
+          selector:
+            boolean: {}
+        status_3_target:
+          name: Open a configured control on tap (optional)
+          description: Entity ID from Favorite controls. Leave blank to run the custom action below.
+          default: ""
+          selector:
+            text: {}
+        status_3_tap_action:
+          name: Custom tap action
+          default: []
+          selector:
+            action: {}
+        status_3_states:
+          name: Show when state equals (comma-separated; State or Both mode)
+          default: "on,open,playing,home,armed_home,armed_away"
+          selector:
+            text: {}
+        status_3_label:
+          name: Short label
+          default: "STATUS 3"
+          selector:
+            text: {}
+        status_3_icon:
+          name: Pixel icon
+          default: alert
+          selector:
+            select:
+              options: [window, door, heating, lock, light, water, music, motion, battery, home, alert]
+    status_4_section:
+      name: Status 4
+      icon: mdi:information-outline
+      collapsed: true
+      input:
+        status_4_entity:
+          name: Entity to watch (select one, or leave empty)
+          default: []
+          selector:
+            entity:
+              multiple: true
+        status_4_source:
+          name: Match against
+          default: state
+          selector:
+            select:
+              options:
+                - label: Entity state
+                  value: state
+                - label: Attribute
+                  value: attribute
+                - label: State AND attribute
+                  value: both
+        status_4_attribute:
+          name: Attribute name (for attribute matching)
+          description: "For example hvac_action, battery_low, or source. Leave empty for state-only matching."
+          default: ""
+          selector:
+            text: {}
+        status_4_attribute_values:
+          name: Show when attribute equals (comma-separated)
+          description: "Exact values; case-insensitive. Use true/false for boolean attributes. Both mode requires state AND attribute to match."
+          default: ""
+          selector:
+            text: {}
+        status_4_priority:
+          name: Priority (higher appears first)
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 10
+              mode: box
+        status_4_comparison:
+          name: Matching rule
+          description: Numeric rules apply to the state in State mode, and the selected attribute in Attribute or Both mode. Both also requires the configured state to match.
+          default: equals
+          selector:
+            select:
+              options: [equals, above, below]
+        status_4_threshold:
+          name: Numeric threshold (Above or Below)
+          default: 20
+          selector:
+            number:
+              min: -10000
+              max: 100000
+              step: 0.1
+              mode: box
+        status_4_show_value:
+          name: Show matched value in details
+          default: true
+          selector:
+            boolean: {}
+        status_4_target:
+          name: Open a configured control on tap (optional)
+          description: Entity ID from Favorite controls. Leave blank to run the custom action below.
+          default: ""
+          selector:
+            text: {}
+        status_4_tap_action:
+          name: Custom tap action
+          default: []
+          selector:
+            action: {}
+        status_4_states:
+          name: Show when state equals (comma-separated; State or Both mode)
+          default: "on,open,playing,home,armed_home,armed_away"
+          selector:
+            text: {}
+        status_4_label:
+          name: Short label
+          default: "STATUS 4"
+          selector:
+            text: {}
+        status_4_icon:
+          name: Pixel icon
+          default: alert
+          selector:
+            select:
+              options: [window, door, heating, lock, light, water, music, motion, battery, home, alert]
+    status_5_section:
+      name: Status 5
+      icon: mdi:information-outline
+      collapsed: true
+      input:
+        status_5_entity:
+          name: Entity to watch (select one, or leave empty)
+          default: []
+          selector:
+            entity:
+              multiple: true
+        status_5_source:
+          name: Match against
+          default: state
+          selector:
+            select:
+              options:
+                - label: Entity state
+                  value: state
+                - label: Attribute
+                  value: attribute
+                - label: State AND attribute
+                  value: both
+        status_5_attribute:
+          name: Attribute name (for attribute matching)
+          description: "For example hvac_action, battery_low, or source. Leave empty for state-only matching."
+          default: ""
+          selector:
+            text: {}
+        status_5_attribute_values:
+          name: Show when attribute equals (comma-separated)
+          description: "Exact values; case-insensitive. Use true/false for boolean attributes. Both mode requires state AND attribute to match."
+          default: ""
+          selector:
+            text: {}
+        status_5_priority:
+          name: Priority (higher appears first)
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 10
+              mode: box
+        status_5_comparison:
+          name: Matching rule
+          description: Numeric rules apply to the state in State mode, and the selected attribute in Attribute or Both mode. Both also requires the configured state to match.
+          default: equals
+          selector:
+            select:
+              options: [equals, above, below]
+        status_5_threshold:
+          name: Numeric threshold (Above or Below)
+          default: 20
+          selector:
+            number:
+              min: -10000
+              max: 100000
+              step: 0.1
+              mode: box
+        status_5_show_value:
+          name: Show matched value in details
+          default: true
+          selector:
+            boolean: {}
+        status_5_target:
+          name: Open a configured control on tap (optional)
+          description: Entity ID from Favorite controls. Leave blank to run the custom action below.
+          default: ""
+          selector:
+            text: {}
+        status_5_tap_action:
+          name: Custom tap action
+          default: []
+          selector:
+            action: {}
+        status_5_states:
+          name: Show when state equals (comma-separated; State or Both mode)
+          default: "on,open,playing,home,armed_home,armed_away"
+          selector:
+            text: {}
+        status_5_label:
+          name: Short label
+          default: "STATUS 5"
+          selector:
+            text: {}
+        status_5_icon:
+          name: Pixel icon
+          default: alert
+          selector:
+            select:
+              options: [window, door, heating, lock, light, water, music, motion, battery, home, alert]
+    status_6_section:
+      name: Status 6
+      icon: mdi:information-outline
+      collapsed: true
+      input:
+        status_6_entity:
+          name: Entity to watch (select one, or leave empty)
+          default: []
+          selector:
+            entity:
+              multiple: true
+        status_6_source:
+          name: Match against
+          default: state
+          selector:
+            select:
+              options:
+                - label: Entity state
+                  value: state
+                - label: Attribute
+                  value: attribute
+                - label: State AND attribute
+                  value: both
+        status_6_attribute:
+          name: Attribute name (for attribute matching)
+          description: "For example hvac_action, battery_low, or source. Leave empty for state-only matching."
+          default: ""
+          selector:
+            text: {}
+        status_6_attribute_values:
+          name: Show when attribute equals (comma-separated)
+          description: "Exact values; case-insensitive. Use true/false for boolean attributes. Both mode requires state AND attribute to match."
+          default: ""
+          selector:
+            text: {}
+        status_6_priority:
+          name: Priority (higher appears first)
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 10
+              mode: box
+        status_6_comparison:
+          name: Matching rule
+          description: Numeric rules apply to the state in State mode, and the selected attribute in Attribute or Both mode. Both also requires the configured state to match.
+          default: equals
+          selector:
+            select:
+              options: [equals, above, below]
+        status_6_threshold:
+          name: Numeric threshold (Above or Below)
+          default: 20
+          selector:
+            number:
+              min: -10000
+              max: 100000
+              step: 0.1
+              mode: box
+        status_6_show_value:
+          name: Show matched value in details
+          default: true
+          selector:
+            boolean: {}
+        status_6_target:
+          name: Open a configured control on tap (optional)
+          description: Entity ID from Favorite controls. Leave blank to run the custom action below.
+          default: ""
+          selector:
+            text: {}
+        status_6_tap_action:
+          name: Custom tap action
+          default: []
+          selector:
+            action: {}
+        status_6_states:
+          name: Show when state equals (comma-separated; State or Both mode)
+          default: "on,open,playing,home,armed_home,armed_away"
+          selector:
+            text: {}
+        status_6_label:
+          name: Short label
+          default: "STATUS 6"
+          selector:
+            text: {}
+        status_6_icon:
+          name: Pixel icon
+          default: alert
+          selector:
+            select:
+              options: [window, door, heating, lock, light, water, music, motion, battery, home, alert]
+    gestures:
+      name: Gestures → Actions
+      description: >-
+        Swipe actions run in Custom or Built-in plus custom mode. Swipe sensors always report. Use built-in navigation for the new pixel interface.
+        Circular gestures always adjust screen brightness locally; optional actions
+        below run once on release. Existing separate gesture automations will
+        still run too, so disable duplicates when moving actions here.
+        Long-press requires a stationary 1.4-second hold and Standby Long-press
+        set to HA action on the device (Timer mode continues to open the timer).
+      icon: mdi:gesture-swipe
+      collapsed: true
+      input:
+        swipe_left_action:
+          name: Swipe left
+          default: []
+          selector:
+            action: {}
+        swipe_right_action:
+          name: Swipe right
+          default: []
+          selector:
+            action: {}
+        swipe_up_action:
+          name: Swipe up
+          default: []
+          selector:
+            action: {}
+        swipe_down_action:
+          name: Swipe down
+          default: []
+          selector:
+            action: {}
+        clockwise_action:
+          name: Clockwise rotation — additional action
+          default: []
+          selector:
+            action: {}
+        counterclockwise_action:
+          name: Counterclockwise rotation — additional action
+          default: []
+          selector:
+            action: {}
+        long_press_action:
+          name: Standby long-press action
+          description: What happens when you hold your finger on the standby screen (e.g. activate a scene).
+          default: []
+          selector:
+            action: {}
+    battery_threshold:
+      name: Thermostat low-battery warning below (%)
+      description: Uses the thermostat's battery attribute, or a sensor named like sensor.<thermostat>_battery.
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 50
+          unit_of_measurement: "%"
+    pizza_section:
+      name: Pizza screen (4 buttons)
+      icon: mdi:pizza
+      collapsed: true
+      input:
+        pizza_1_label:
+          name: Slice 1 (top) - label
+          default: "Movie"
+          selector:
+            text: {}
+        pizza_1_icon:
+          name: Slice 1 (top) - icon
+          default: movie
+          selector:
+            select:
+              options:
+                - lightbulb
+                - power
+                - movie
+                - night
+                - bed
+                - sofa
+                - vacuum
+                - fan
+                - tv
+                - music
+                - lock
+                - garage
+                - home
+                - fire
+                - coffee
+                - star
+        pizza_1_action:
+          name: Slice 1 (top) - action
+          default: []
+          selector:
+            action: {}
+        pizza_2_label:
+          name: Slice 2 (right) - label
+          default: "Night"
+          selector:
+            text: {}
+        pizza_2_icon:
+          name: Slice 2 (right) - icon
+          default: night
+          selector:
+            select:
+              options:
+                - lightbulb
+                - power
+                - movie
+                - night
+                - bed
+                - sofa
+                - vacuum
+                - fan
+                - tv
+                - music
+                - lock
+                - garage
+                - home
+                - fire
+                - coffee
+                - star
+        pizza_2_action:
+          name: Slice 2 (right) - action
+          default: []
+          selector:
+            action: {}
+        pizza_3_label:
+          name: Slice 3 (bottom) - label
+          default: "All off"
+          selector:
+            text: {}
+        pizza_3_icon:
+          name: Slice 3 (bottom) - icon
+          default: power
+          selector:
+            select:
+              options:
+                - lightbulb
+                - power
+                - movie
+                - night
+                - bed
+                - sofa
+                - vacuum
+                - fan
+                - tv
+                - music
+                - lock
+                - garage
+                - home
+                - fire
+                - coffee
+                - star
+        pizza_3_action:
+          name: Slice 3 (bottom) - action
+          default: []
+          selector:
+            action: {}
+        pizza_4_label:
+          name: Slice 4 (left) - label
+          default: "Vacuum"
+          selector:
+            text: {}
+        pizza_4_icon:
+          name: Slice 4 (left) - icon
+          default: vacuum
+          selector:
+            select:
+              options:
+                - lightbulb
+                - power
+                - movie
+                - night
+                - bed
+                - sofa
+                - vacuum
+                - fan
+                - tv
+                - music
+                - lock
+                - garage
+                - home
+                - fire
+                - coffee
+                - star
+        pizza_4_action:
+          name: Slice 4 (left) - action
+          default: []
+          selector:
+            action: {}
+    device_name:
+      name: ESPHome device name
+      description: The name from the firmware (name - substitution), dashes replaced by underscores.
+      default: pixizhi
+      selector:
+        text: {}
+    ha_url:
+      name: Home Assistant address (for album art)
+      description: How the PixiZhi SpotPear reaches Home Assistant, e.g. http://homeassistant.local:8123 (no slash at the end).
+      default: http://homeassistant.local:8123
+      selector:
+        text: {}
+
+mode: parallel
+max: 30
+max_exceeded: silent
+
+variables:
+  navigation_mode: !input navigation_mode
+  labels_in: !input screen_labels
+  screens_in: !input screens
+  standby_temperature: !input standby_temperature
+  standby_humidity: !input standby_humidity
+  standby_player: !input standby_player
+  weather_ent: !input weather
+  node: !input device_name
+  ha_url: !input ha_url
+  batt_min: !input battery_threshold
+  status_slots:
+    - entities: !input status_1_entity
+      states: !input status_1_states
+      source: !input status_1_source
+      attribute: !input status_1_attribute
+      attribute_values: !input status_1_attribute_values
+      label: !input status_1_label
+      icon: !input status_1_icon
+      comparison: !input status_1_comparison
+      threshold: !input status_1_threshold
+      show_value: !input status_1_show_value
+      target: !input status_1_target
+      priority: !input status_1_priority
+    - entities: !input status_2_entity
+      states: !input status_2_states
+      source: !input status_2_source
+      attribute: !input status_2_attribute
+      attribute_values: !input status_2_attribute_values
+      label: !input status_2_label
+      icon: !input status_2_icon
+      comparison: !input status_2_comparison
+      threshold: !input status_2_threshold
+      show_value: !input status_2_show_value
+      target: !input status_2_target
+      priority: !input status_2_priority
+    - entities: !input status_3_entity
+      states: !input status_3_states
+      source: !input status_3_source
+      attribute: !input status_3_attribute
+      attribute_values: !input status_3_attribute_values
+      label: !input status_3_label
+      icon: !input status_3_icon
+      comparison: !input status_3_comparison
+      threshold: !input status_3_threshold
+      show_value: !input status_3_show_value
+      target: !input status_3_target
+      priority: !input status_3_priority
+    - entities: !input status_4_entity
+      states: !input status_4_states
+      source: !input status_4_source
+      attribute: !input status_4_attribute
+      attribute_values: !input status_4_attribute_values
+      label: !input status_4_label
+      icon: !input status_4_icon
+      comparison: !input status_4_comparison
+      threshold: !input status_4_threshold
+      show_value: !input status_4_show_value
+      target: !input status_4_target
+      priority: !input status_4_priority
+    - entities: !input status_5_entity
+      states: !input status_5_states
+      source: !input status_5_source
+      attribute: !input status_5_attribute
+      attribute_values: !input status_5_attribute_values
+      label: !input status_5_label
+      icon: !input status_5_icon
+      comparison: !input status_5_comparison
+      threshold: !input status_5_threshold
+      show_value: !input status_5_show_value
+      target: !input status_5_target
+      priority: !input status_5_priority
+    - entities: !input status_6_entity
+      states: !input status_6_states
+      source: !input status_6_source
+      attribute: !input status_6_attribute
+      attribute_values: !input status_6_attribute_values
+      label: !input status_6_label
+      icon: !input status_6_icon
+      comparison: !input status_6_comparison
+      threshold: !input status_6_threshold
+      show_value: !input status_6_show_value
+      target: !input status_6_target
+      priority: !input status_6_priority
+  pizza:
+    - label: !input pizza_1_label
+      icon: !input pizza_1_icon
+    - label: !input pizza_2_label
+      icon: !input pizza_2_icon
+    - label: !input pizza_3_label
+      icon: !input pizza_3_icon
+    - label: !input pizza_4_label
+      icon: !input pizza_4_icon
+  slots: >-
+    {% set s = screens_in if screens_in is list else ([screens_in] if screens_in else []) %}
+    {{ s[:6] }}
+
+triggers:
+  - trigger: state
+    entity_id: !input status_1_entity
+    id: statuses
+  - trigger: state
+    entity_id: !input status_2_entity
+    id: statuses
+  - trigger: state
+    entity_id: !input status_3_entity
+    id: statuses
+  - trigger: state
+    entity_id: !input status_4_entity
+    id: statuses
+  - trigger: state
+    entity_id: !input status_5_entity
+    id: statuses
+  - trigger: state
+    entity_id: !input status_6_entity
+    id: statuses
+  - trigger: event
+    event_type: esphome.pixizhi_status_tap
+    id: status_tap
+  - trigger: state
+    entity_id: !input standby_temperature
+    id: climate
+  - trigger: state
+    entity_id: !input standby_humidity
+    id: climate
+  - trigger: time_pattern
+    seconds: "/15"
+    id: statuses
+  - trigger: event
+    event_type: esphome.pixizhi_gesture
+    id: gesture
+  - trigger: event
+    event_type: esphome.pixizhi_rotate
+    id: rotation
+  - trigger: state
+    entity_id: !input standby_player
+    id: standby_player
+  - trigger: state
+    entity_id: !input screens
+    id: changed
+  - trigger: state
+    entity_id: !input weather
+    id: weather
+  - trigger: event
+    event_type: esphome.pixizhi_long_press
+    id: long_press
+  - trigger: event
+    event_type: esphome.pixizhi_pizza
+    id: pizza
+  - trigger: event
+    event_type: esphome.pixizhi_refresh
+    id: refresh
+  - trigger: homeassistant
+    event: start
+    id: refresh
+  - trigger: event
+    event_type: automation_reloaded
+    id: refresh
+
+actions:
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'status_tap' }}"
+    then:
+      - choose:
+          - conditions: "{{ trigger.event.data.get('slot', 0) | int == 1 }}"
+            sequence: !input status_1_tap_action
+          - conditions: "{{ trigger.event.data.get('slot', 0) | int == 2 }}"
+            sequence: !input status_2_tap_action
+          - conditions: "{{ trigger.event.data.get('slot', 0) | int == 3 }}"
+            sequence: !input status_3_tap_action
+          - conditions: "{{ trigger.event.data.get('slot', 0) | int == 4 }}"
+            sequence: !input status_4_tap_action
+          - conditions: "{{ trigger.event.data.get('slot', 0) | int == 5 }}"
+            sequence: !input status_5_tap_action
+          - conditions: "{{ trigger.event.data.get('slot', 0) | int == 6 }}"
+            sequence: !input status_6_tap_action
+      - stop: Status tap handled
+  - condition: template
+    value_template: >-
+      {{ trigger.platform != 'event' or trigger.event.event_type not in
+         ['esphome.pixizhi_refresh', 'esphome.pixizhi_gesture', 'esphome.pixizhi_rotate',
+          'esphome.pixizhi_long_press', 'esphome.pixizhi_pizza', 'esphome.pixizhi_status_tap'] or
+         trigger.event.data.get('node', '') | replace('-', '_') == node | replace('-', '_') }}
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id in ['climate', 'refresh', 'statuses'] }}"
+    then:
+      - action: "esphome.{{ node }}_set_standby_climate"
+        data:
+          temperature: "{{ states(standby_temperature) }}"
+          humidity: "{{ states(standby_humidity) }}"
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id == 'climate' }}"
+        then:
+          - stop: Standby climate updated
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id in ['statuses', 'refresh'] }}"
+    then:
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id == 'refresh' }}"
+        then:
+          - action: "esphome.{{ node }}_set_standby_music_options"
+            data:
+              enabled: !input show_standby_music
+          - action: "esphome.{{ node }}_set_control_options"
+            data:
+              volume_limit: !input music_volume_limit
+              gesture_mode: "{{ {'builtin': 0, 'custom': 1, 'disabled': 2, 'additional': 3}.get(navigation_mode, 0) }}"
+          - action: "esphome.{{ node }}_set_standby_options"
+            data:
+              seconds: !input status_interval
+              animate: !input weather_animation
+      - repeat:
+          for_each: "{{ status_slots }}"
+          sequence:
+            - variables:
+                ent: "{{ repeat.item.entities[0] if repeat.item.entities | count > 0 else '' }}"
+                active_states: "{{ repeat.item.states.split(',') | map('trim') | list }}"
+            - action: "esphome.{{ node }}_set_status"
+              data:
+                slot: "{{ repeat.index - 1 }}"
+                label: "{{ repeat.item.label[:12] }}"
+                icon: "{{ repeat.item.icon }}"
+                active: >-
+                  {% set mode = repeat.item.source %}
+                  {% set attr = repeat.item.attribute | trim %}
+                  {% set state_ok = states(ent) | lower in (active_states | map('lower') | list) %}
+                  {% set allowed = repeat.item.attribute_values.split(',') | map('trim') | map('lower') | reject('eq', '') | list %}
+                  {% set value = state_attr(ent, attr) if ent and attr else none %}
+                  {% set comparison = repeat.item.comparison %}
+                  {% set threshold = repeat.item.threshold | float %}
+                  {% set attr_ok = attr != '' and value is not none and (value | string | lower) in allowed %}
+                  {% if comparison != 'equals' %}
+                    {% set candidate = states(ent) if mode == 'state' else value %}
+                    {% set numeric_ok = is_number(candidate) and ((candidate | float > threshold) if comparison == 'above' else (candidate | float < threshold)) %}
+                    {% if mode == 'state' %}{% set state_ok = numeric_ok %}{% else %}{% set attr_ok = attr != '' and numeric_ok %}{% endif %}
+                  {% endif %}
+                  {{ ent != '' and states(ent) not in ['unknown', 'unavailable'] and
+                     ((mode == 'state' and state_ok) or (mode == 'attribute' and attr_ok) or
+                      (mode == 'both' and state_ok and attr_ok)) }}
+            - action: "esphome.{{ node }}_set_status_detail"
+              data:
+                slot: "{{ repeat.index - 1 }}"
+                target: "{{ repeat.item.target | trim }}"
+                priority: "{{ repeat.item.priority }}"
+                value: >-
+                  {% set value = states(ent) if repeat.item.source == 'state' else state_attr(ent, repeat.item.attribute | trim) %}
+                  {{ ((value | string) ~ (' ' ~ (state_attr(ent, 'unit_of_measurement') or '') if repeat.item.source == 'state' else ''))[:80] if repeat.item.show_value and ent and value is not none else '' }}
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id in ['gesture', 'rotation'] }}"
+    then:
+      - condition: template
+        value_template: "{{ trigger.event.data.get('node', '') | replace('-', '_') == node | replace('-', '_') }}"
+      - condition: template
+        value_template: "{{ trigger.id == 'rotation' or navigation_mode in ['custom', 'additional'] }}"
+      - choose:
+          - conditions: "{{ trigger.event.data.get('gesture', '') == 'swipe_left' }}"
+            sequence: !input swipe_left_action
+          - conditions: "{{ trigger.event.data.get('gesture', '') == 'swipe_right' }}"
+            sequence: !input swipe_right_action
+          - conditions: "{{ trigger.event.data.get('gesture', '') == 'swipe_up' }}"
+            sequence: !input swipe_up_action
+          - conditions: "{{ trigger.event.data.get('gesture', '') == 'swipe_down' }}"
+            sequence: !input swipe_down_action
+          - conditions: "{{ trigger.event.data.get('direction', '') == 'clockwise' }}"
+            sequence: !input clockwise_action
+          - conditions: "{{ trigger.event.data.get('direction', '') == 'counterclockwise' }}"
+            sequence: !input counterclockwise_action
+      - stop: Gesture handled
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'long_press' }}"
+    then:
+      - sequence: !input long_press_action
+      - stop: Long press handled
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'pizza' }}"
+    then:
+      - choose:
+          - conditions: "{{ trigger.event.data.slice | int(0) == 1 }}"
+            sequence: !input pizza_1_action
+          - conditions: "{{ trigger.event.data.slice | int(0) == 2 }}"
+            sequence: !input pizza_2_action
+          - conditions: "{{ trigger.event.data.slice | int(0) == 3 }}"
+            sequence: !input pizza_3_action
+          - conditions: "{{ trigger.event.data.slice | int(0) == 4 }}"
+            sequence: !input pizza_4_action
+      - stop: Pizza slice handled
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id in ['standby_player', 'refresh', 'statuses'] }}"
+    then:
+      - action: "esphome.{{ node }}_set_standby_player"
+        data:
+          eid: "{{ standby_player }}"
+          state: "{{ states(standby_player) }}"
+          title: "{{ state_attr(standby_player, 'media_title') or '' }}"
+          artist: "{{ state_attr(standby_player, 'media_artist') or state_attr(standby_player, 'media_album_name') or '' }}"
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'standby_player' }}"
+    then:
+      - stop: Standby player updated
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'refresh' }}"
+    then:
+      - repeat:
+          for_each: "{{ pizza }}"
+          sequence:
+            - action: "esphome.{{ node }}_set_pizza"
+              data:
+                slice: "{{ repeat.index }}"
+                label: "{{ repeat.item.label }}"
+                icon: "{{ repeat.item.icon }}"
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id in ['weather', 'refresh', 'statuses'] }}"
+    then:
+      - action: "esphome.{{ node }}_set_weather"
+        data:
+          temp: "{{ state_attr(weather_ent, 'temperature') | float(0) }}"
+          unit: "{{ state_attr(weather_ent, 'temperature_unit') or '' }}"
+          condition: "{{ states(weather_ent) if is_number(state_attr(weather_ent, 'temperature')) else 'unavailable' }}"
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'weather' }}"
+    then:
+      - stop: Weather only
+  - variables:
+      targets: >-
+        {% set ns = namespace(t=[]) %}
+        {% if trigger.id == 'changed' %}
+          {% for i in range(slots | count) %}
+            {% if slots[i] == trigger.entity_id %}{% set ns.t = ns.t + [i] %}{% endif %}
+          {% endfor %}
+        {% else %}
+          {% set ns.t = range(6) | list %}
+        {% endif %}
+        {{ ns.t }}
+  - repeat:
+      for_each: "{{ targets }}"
+      sequence:
+        - variables:
+            i: "{{ repeat.item | int }}"
+            ent: "{{ slots[i] if i < (slots | count) else '' }}"
+        - if:
+            - condition: template
+              value_template: "{{ ent == '' }}"
+          then:
+            - action: "esphome.{{ node }}_clear_slot"
+              data:
+                slot: "{{ i }}"
+          else:
+            - action: "esphome.{{ node }}_set_slot"
+              data:
+                slot: "{{ i }}"
+                eid: "{{ ent }}"
+                label: >-
+                  {% set labels = labels_in.split(',') | map('trim') | list %}
+                  {{ labels[i] if i < labels | count and labels[i] else state_attr(ent, 'friendly_name') or ent }}
+                state: "{{ states(ent) }}"
+                dimmable: >-
+                  {{ (state_attr(ent, 'supported_color_modes') or []) | select('in', ['brightness', 'color_temp', 'hs', 'rgb', 'rgbw', 'rgbww', 'xy', 'white']) | list | count > 0 }}
+                brightness: "{{ state_attr(ent, 'brightness') | int(0) }}"
+                color: >-
+                  {% set c = state_attr(ent, 'rgb_color') %}
+                  {% if c %}{{ (c[0] | int) * 65536 + (c[1] | int) * 256 + (c[2] | int) }}{% else %}16762998{% endif %}
+                color_capable: >-
+                  {{ (state_attr(ent, 'supported_color_modes') or []) | select('in', ['hs', 'rgb', 'rgbw', 'rgbww', 'xy']) | list | count > 0 }}
+                title: "{{ state_attr(ent, 'media_title') or '' }}"
+                artist: "{{ state_attr(ent, 'media_artist') or state_attr(ent, 'media_album_name') or '' }}"
+                volume: "{{ state_attr(ent, 'volume_level') | float(0) }}"
+                picture: >-
+                  {% set p = state_attr(ent, 'entity_picture') %}
+                  {% if p %}{{ p if p.startswith('http') else ha_url ~ p }}{% endif %}
+                temp_now: "{{ state_attr(ent, 'current_temperature') | float(-999) }}"
+                temp_target: "{{ state_attr(ent, 'temperature') | float(0) }}"
+                temp_min: "{{ state_attr(ent, 'min_temp') | float(5) }}"
+                temp_max: "{{ state_attr(ent, 'max_temp') | float(30) }}"
+                hvac_action: "{{ state_attr(ent, 'hvac_action') or '' }}"
+                battery_low: >-
+                  {% set b = state_attr(ent, 'battery') %}
+                  {% if b is none %}{% set b = states('sensor.' ~ ent.split('.')[1] ~ '_battery') %}{% endif %}
+                  {{ ent.startswith('climate.') and (b | float(100)) < (batt_min | float(20)) }}
+            - action: "esphome.{{ node }}_set_slot_features"
+              data:
+                slot: "{{ i }}"
+                step: "{{ state_attr(ent, 'target_temp_step') | float(0.5) }}"
+                features: "{{ state_attr(ent, 'supported_features') | int(0) }}"
+                white: "{{ 'color_temp' in (state_attr(ent, 'supported_color_modes') or []) }}"
+                kelvin_min: "{{ state_attr(ent, 'min_color_temp_kelvin') | int(2000) }}"
+                kelvin_max: "{{ state_attr(ent, 'max_color_temp_kelvin') | int(6500) }}"
+                modes: "{{ (state_attr(ent, 'hvac_modes') or []) | join('|') }}"
+                presets: "{{ (state_attr(ent, 'preset_modes') or []) | join('|') }}"
+                unit: "{{ state_attr(ent, 'temperature_unit') or state_attr(ent, 'unit_of_measurement') or '°C' }}"
+                sources: "{{ (state_attr(ent, 'source_list') or []) | join('|') }}"
+                repeat: "{{ state_attr(ent, 'repeat') or 'off' }}"
+                muted: "{{ state_attr(ent, 'is_volume_muted') | default(false, true) }}"
+                shuffle: "{{ state_attr(ent, 'shuffle') | default(false, true) }}"

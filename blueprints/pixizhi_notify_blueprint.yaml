@@ -1,0 +1,100 @@
+blueprint:
+  name: PixiZhi SpotPear - notification
+  description: >-
+    Show a notification on the PixiZhi SpotPear when something happens. Normal ones wait
+    on the standby screen (badge + LED) until you tap them away. Urgent ones wake
+    the screen, pulse red, chime every minute and need a hold to dismiss.
+    Needs "Allow the device to perform Home Assistant actions" turned on in the
+    PixiZhi SpotPear's ESPHome device settings.
+  domain: automation
+  author: PixiZhi SpotPear contributors
+  input:
+    notify_trigger:
+      name: When
+      description: What should create the notification (washer finished, door open, ...).
+      selector:
+        trigger: {}
+    notify_conditions:
+      name: Only if (optional)
+      default: []
+      selector:
+        condition: {}
+    title:
+      name: Title
+      default: "Heads up"
+      selector:
+        text: {}
+    message:
+      name: Message
+      default: ""
+      selector:
+        text:
+          multiline: true
+    icon:
+      name: Icon
+      default: bell
+      selector:
+        select:
+          options:
+            - bell
+            - door
+            - window
+            - washer
+            - package
+            - mail
+            - battery
+            - alert
+            - info
+            - check
+            - water
+            - timer
+            - lightbulb
+            - power
+            - fire
+            - lock
+            - garage
+            - home
+            - tv
+            - music
+    color:
+      name: Color
+      default: [58, 160, 255]
+      selector:
+        color_rgb: {}
+    urgent:
+      name: Urgent
+      description: Wakes the screen, pulses red, chimes every minute, needs a hold to dismiss.
+      default: false
+      selector:
+        boolean: {}
+    device_name:
+      name: ESPHome device name
+      description: The name from the firmware (name - substitution), dashes replaced by underscores.
+      default: pixizhi
+      selector:
+        text: {}
+
+mode: queued
+max: 10
+max_exceeded: silent
+
+variables:
+  node: !input device_name
+  rgb_in: !input color
+  n_title: !input title
+  n_message: !input message
+  n_icon: !input icon
+  n_urgent: !input urgent
+
+triggers: !input notify_trigger
+
+conditions: !input notify_conditions
+
+actions:
+  - action: "esphome.{{ node }}_notify"
+    data:
+      title: "{{ n_title }}"
+      message: "{{ n_message }}"
+      icon: "{{ n_icon }}"
+      color: "{{ (rgb_in[0] | int) * 65536 + (rgb_in[1] | int) * 256 + (rgb_in[2] | int) }}"
+      urgent: "{{ n_urgent }}"
