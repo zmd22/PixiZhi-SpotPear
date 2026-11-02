@@ -1218,6 +1218,8 @@ switch:
             - lambda: id(siren_active) = false;
             - media_player.stop: ball_media_player
             - delay: 150ms
+            - script.execute: apply_audio_output
+            - script.wait: apply_audio_output
             - media_player.volume_set:
                 id: ball_media_player
                 volume: !lambda return id(siren_prev_volume);
@@ -1750,7 +1752,8 @@ script:
       - switch.turn_off: speaker_enable
       - if:
           condition:
-            lambda: return id(audio_output).active_index().value_or(0) == 1;
+            # The siren always uses the built-in speaker, whatever output is selected.
+            lambda: return id(audio_output).active_index().value_or(0) == 1 && !id(siren_active);
           then:
             - router.speaker.switch_output:
                 id: box_speaker
@@ -3403,6 +3406,9 @@ script:
     then:
       - media_player.stop: ball_media_player
       - delay: 300ms
+      - script.execute: apply_audio_output
+      - script.wait: apply_audio_output
+      - media_player.unmute: ball_media_player
       - media_player.volume_set:
           id: ball_media_player
           volume: 100%
@@ -3449,6 +3455,19 @@ interval:
   - interval: 250ms
     then:
       - script.execute: audio_display_policy
+  # Siren volume lock: undo volume or mute changes from HA or anywhere else.
+  - interval: 250ms
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(siren_active) &&
+                (id(ball_media_player).volume < 0.999f || id(ball_media_player).is_muted());
+          then:
+            - media_player.unmute: ball_media_player
+            - media_player.volume_set:
+                id: ball_media_player
+                volume: 100%
   - interval: 1s
     then:
       - script.execute: setup_card_update
@@ -3459,7 +3478,7 @@ interval:
           const bool selected_usb = id(audio_output).active_index().value_or(0) == 1;
           const bool pending_audio = !id(usb_speaker).is_stopped() ||
             id(media_mixer_input).has_buffered_data() || id(announcement_mixer_input).has_buffered_data();
-          if (!id(ui_ready) || !id(usb_audio_fallback).state || !selected_usb ||
+          if (!id(ui_ready) || id(siren_active) || !id(usb_audio_fallback).state || !selected_usb ||
               !pending_audio || id(usb_speaker).is_running()) {
             waiting_since = 0;
             return;

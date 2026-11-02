@@ -20,6 +20,9 @@
 - Siren: full-screen STOP button that works without Home Assistant, replays the
   built-in sound reliably without relying on media repeat, keeps the original
   volume when switched on twice, and hands the LED back to notifications.
+- Siren always plays on the built-in speaker at full volume, even with the USB
+  DAC selected; volume and mute are locked while it sounds, and the previous
+  output and volume are restored afterwards.
 
 ## 0.9.9
 
