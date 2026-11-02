@@ -849,6 +849,140 @@ blueprint:
           default: []
           selector:
             action: {}
+    pizza_page2_section:
+      name: Pizza screen page 2 (swipe left on the pizza screen)
+      description: Leave a label empty to hide that slice. Page 2 appears only when at least one label is set.
+      icon: mdi:pizza
+      collapsed: true
+      input:
+        pizza_5_label:
+          name: Slice 5 (top) - label
+          default: ""
+          selector:
+            text: {}
+        pizza_5_icon:
+          name: Slice 5 (top) - icon
+          default: star
+          selector:
+            select:
+              options:
+                - lightbulb
+                - power
+                - movie
+                - night
+                - bed
+                - sofa
+                - vacuum
+                - fan
+                - tv
+                - music
+                - lock
+                - garage
+                - home
+                - fire
+                - coffee
+                - star
+        pizza_5_action:
+          name: Slice 5 (top) - action
+          default: []
+          selector:
+            action: {}
+        pizza_6_label:
+          name: Slice 6 (right) - label
+          default: ""
+          selector:
+            text: {}
+        pizza_6_icon:
+          name: Slice 6 (right) - icon
+          default: star
+          selector:
+            select:
+              options:
+                - lightbulb
+                - power
+                - movie
+                - night
+                - bed
+                - sofa
+                - vacuum
+                - fan
+                - tv
+                - music
+                - lock
+                - garage
+                - home
+                - fire
+                - coffee
+                - star
+        pizza_6_action:
+          name: Slice 6 (right) - action
+          default: []
+          selector:
+            action: {}
+        pizza_7_label:
+          name: Slice 7 (bottom) - label
+          default: ""
+          selector:
+            text: {}
+        pizza_7_icon:
+          name: Slice 7 (bottom) - icon
+          default: star
+          selector:
+            select:
+              options:
+                - lightbulb
+                - power
+                - movie
+                - night
+                - bed
+                - sofa
+                - vacuum
+                - fan
+                - tv
+                - music
+                - lock
+                - garage
+                - home
+                - fire
+                - coffee
+                - star
+        pizza_7_action:
+          name: Slice 7 (bottom) - action
+          default: []
+          selector:
+            action: {}
+        pizza_8_label:
+          name: Slice 8 (left) - label
+          default: ""
+          selector:
+            text: {}
+        pizza_8_icon:
+          name: Slice 8 (left) - icon
+          default: star
+          selector:
+            select:
+              options:
+                - lightbulb
+                - power
+                - movie
+                - night
+                - bed
+                - sofa
+                - vacuum
+                - fan
+                - tv
+                - music
+                - lock
+                - garage
+                - home
+                - fire
+                - coffee
+                - star
+        pizza_8_action:
+          name: Slice 8 (left) - action
+          default: []
+          selector:
+            action: {}
     device_name:
       name: ESPHome device name
       description: The name from the firmware (name - substitution), dashes replaced by underscores.
@@ -959,6 +1093,14 @@ variables:
       icon: !input pizza_3_icon
     - label: !input pizza_4_label
       icon: !input pizza_4_icon
+    - label: !input pizza_5_label
+      icon: !input pizza_5_icon
+    - label: !input pizza_6_label
+      icon: !input pizza_6_icon
+    - label: !input pizza_7_label
+      icon: !input pizza_7_icon
+    - label: !input pizza_8_label
+      icon: !input pizza_8_icon
   slots: >-
     {% set s = screens_in if screens_in is list else ([screens_in] if screens_in else []) %}
     {{ s[:6] }}
@@ -1159,6 +1301,14 @@ actions:
             sequence: !input pizza_3_action
           - conditions: "{{ trigger.event.data.slice | int(0) == 4 }}"
             sequence: !input pizza_4_action
+          - conditions: "{{ trigger.event.data.slice | int(0) == 5 }}"
+            sequence: !input pizza_5_action
+          - conditions: "{{ trigger.event.data.slice | int(0) == 6 }}"
+            sequence: !input pizza_6_action
+          - conditions: "{{ trigger.event.data.slice | int(0) == 7 }}"
+            sequence: !input pizza_7_action
+          - conditions: "{{ trigger.event.data.slice | int(0) == 8 }}"
+            sequence: !input pizza_8_action
       - stop: Pizza slice handled
   - if:
       - condition: template

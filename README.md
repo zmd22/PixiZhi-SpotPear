@@ -1,6 +1,6 @@
 # PixiZhi SpotPear
 
-**0.9.8 · ESPHome firmware and Home Assistant blueprints for the Spotpear Ball v2**
+**0.9.9 · ESPHome firmware and Home Assistant blueprints for the Spotpear Ball v2**
 
 A bold pixel interface for a small round desktop display: clock, home controls,
 music, thermostats, status, notifications, timer, and four quick actions.
@@ -49,7 +49,7 @@ connection. A higher-power DAC or a different board may need additional hardware
 
 ## Install
 
-1. Copy `pixizhi.yaml`, `components/`, `fonts/`, and `sounds/` together into your
+1. Copy `pixizhi.yaml`, `pixizhi_ui.h`, `components/`, `fonts/`, and `sounds/` together into your
    ESPHome configuration directory. Keep their relative paths intact.
 2. Copy `secrets.yaml.example` to `secrets.yaml`. Fill in your Wi-Fi credentials,
    a unique fallback-AP password (at least eight characters), and OTA password.
@@ -104,7 +104,11 @@ and [validation notes](docs/VALIDATION.md).
 The `dev` branch is experimental and is the current development branch.
 
 
-This is an early **0.9.8** source release. USB software volume was tested
+This is an early **0.9.9** source release. The 0.9.9 additions compile with
+ESPHome 2026.11.0-dev and pass host tests of the shared helpers, but have not yet
+been exercised on hardware (deep-standby touch wake in particular).
+
+The 0.9.8 base is described below. USB software volume was tested
 successfully on compatible hardware. The pixel interface passed full development
 firmware compilation and host checks of rendering, scheduling, and brightness.
 The complete 0.9.8 interface/authentication combination still needs on-device

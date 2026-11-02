@@ -65,3 +65,23 @@ controls are blocked. Clock, brightness, and timer remain local.
 The optional Pause Display During Audio setting defaults off. It is a diagnostic
 switch: the screen may show old information while paused. Leave it off for
 normal use, and use HA controls during a comparison test.
+
+## Power and battery (0.9.9)
+
+- **Deep Standby After** (minutes, 0 = off): after the screen has dimmed for this
+  long, the device deep-sleeps and wakes on a touch. While asleep it is offline:
+  no HA control, music, notifications or LED alerts. It never sleeps while
+  `Charging (estimated)` is on, during playback, a running/finished timer, an
+  urgent alert, the siren, or Sendspin pairing.
+- **Charging (estimated)**: the board exposes no charger signal, so charging is
+  inferred from the idle battery voltage (≥ 4.17 V, or rising over five minutes).
+  Expect a delay of a few minutes after plugging in or out.
+- Battery readings are frozen while audio plays, because speaker load lowers the
+  measured voltage.
+- With **Standby Brightness** at 0 %, the standby screen is not redrawn until woken.
+
+## Updates
+
+The firmware checks `https://api.github.com/repos/<github_repo>/releases/latest`
+two minutes after boot and every 12 hours (`github_repo` substitution). It only
+reports a newer release; you still rebuild with your own secrets to install it.

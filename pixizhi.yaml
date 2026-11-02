@@ -1,5 +1,5 @@
 # =============================================================================
-#  PixiZhi SpotPear 0.9.8 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
+#  PixiZhi SpotPear 0.9.9 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
 #  Standby clock + up to 6 light / media player / thermostat screens picked in
 #  Home Assistant, pizza button screen, notification center, kitchen timer,
 #  pixel clock, Sendspin speaker, siren, LED notifications,
@@ -8,6 +8,8 @@
 # =============================================================================
 
 substitutions:
+  # GitHub repository checked for new releases (owner/name).
+  github_repo: zmd22/PixiZhi-SpotPear
   name: pixizhi
   friendly_name: PixiZhi SpotPear
   timezone: Etc/UTC
@@ -17,13 +19,18 @@ esphome:
   friendly_name: ${friendly_name}
   project:
     name: pixizhi.spotpear
-    version: "0.9.8"
+    version: "0.9.9"
   min_version: 2026.11.0-dev
   name_add_mac_suffix: false
+  includes:
+    - pixizhi_ui.h
   on_boot:
     priority: -100
     then:
       - lambda: id(ui_ready) = true;
+      - script.execute: nq_restore
+      - script.execute: timer_restore
+      - script.execute: timer_publish
       - script.execute: draw_wheel
       - script.execute: update_clock
       - script.execute: apply_standby_style
@@ -78,12 +85,17 @@ usb_audio:
   id: usb_audio_bus
 
 http_request:
-  verify_ssl: false
+  verify_ssl: true
+  useragent: PixiZhi-SpotPear
+  timeout: 10s
 
 api:
   encryption:
     key: !secret api_encryption_key
+  on_client_disconnected:
+    - script.execute: link_changed
   on_client_connected:
+    - script.execute: link_changed
     - delay: 3s
     - homeassistant.event:
         event: esphome.pixizhi_refresh
@@ -291,7 +303,7 @@ api:
         icon: string
       then:
         - lambda: |-
-            if (slice < 1 || slice > 4) return;
+            if (slice < 1 || slice > pixizhi::PIZZA_PAGES * pixizhi::PIZZA_PAGE_SIZE) return;
             id(pizza_labels)[slice-1] = label;
             id(pizza_keys)[slice-1] = icon;
             id(ui_render).execute();
@@ -316,7 +328,7 @@ api:
               id(nq_time).erase(id(nq_time).begin() + k);
             }
             auto now = id(ha_time).now();
-            std::string tm = now.is_valid() ? now.strftime("%H:%M") : std::string("");
+            uint32_t tm = now.is_valid() ? (uint32_t) now.timestamp : 0;
             // urgent ones go to the front of the queue
             size_t pos = urgent ? 0 : id(nq_title).size();
             id(nq_title).insert(id(nq_title).begin() + pos, title);
@@ -325,11 +337,12 @@ api:
             id(nq_color).insert(id(nq_color).begin() + pos, (uint32_t) color);
             id(nq_urgent).insert(id(nq_urgent).begin() + pos, urgent);
             id(nq_time).insert(id(nq_time).begin() + pos, tm);
+        - script.execute: nq_save
         - script.execute: update_badge
         - script.execute: notif_led
         - if:
             condition:
-              lambda: return id(overlay) == 1;
+              lambda: return id(overlay) == pixizhi::OVERLAY_NOTIFICATIONS;
             then:
               - script.execute: notif_fill
         - if:
@@ -340,7 +353,7 @@ api:
             else:
               - if:
                   condition:
-                    lambda: return id(overlay) == 1;
+                    lambda: return id(overlay) == pixizhi::OVERLAY_NOTIFICATIONS;
                   then:
                     - script.execute: notif_fill
     - action: clear_notifications
@@ -348,6 +361,7 @@ api:
         - lambda: |-
             id(nq_title).clear(); id(nq_msg).clear(); id(nq_icon).clear();
             id(nq_color).clear(); id(nq_urgent).clear(); id(nq_time).clear();
+        - script.execute: nq_save
         - script.stop: urgent_loop
         - script.execute: notif_closed
     - action: flash_led
@@ -388,6 +402,7 @@ time:
     id: ha_time
     timezone: ${timezone}
     on_time_sync:
+      - script.execute: timer_restore
       - script.execute: update_clock
     on_time:
       - seconds: 0
@@ -407,10 +422,24 @@ globals:
     initial_value: '0'
   - id: pizza_labels
     type: std::vector<std::string>
-    initial_value: 'std::vector<std::string>{"ACTION 1","ACTION 2","ACTION 3","ACTION 4"}'
+    initial_value: 'std::vector<std::string>{"ACTION 1","ACTION 2","ACTION 3","ACTION 4","","","","","","","",""}'
   - id: pizza_keys
     type: std::vector<std::string>
-    initial_value: 'std::vector<std::string>(4,"star")'
+    initial_value: 'std::vector<std::string>(12,"star")'
+  - id: pizza_pg
+    type: int
+    initial_value: '0'
+  # Pages with at least one labelled slice; page 0 always exists.
+  - id: pizza_page_count
+    type: std::function<int()>
+    initial_value: |-
+      []() -> int {
+        int pages = 1;
+        for (int p = 1; p < pixizhi::PIZZA_PAGES; p++)
+          for (int k = 0; k < pixizhi::PIZZA_PAGE_SIZE; k++)
+            if (!id(pizza_labels)[p * pixizhi::PIZZA_PAGE_SIZE + k].empty()) pages = p + 1;
+        return pages;
+      }
   - id: sendspin_pairing_visible
     type: bool
     initial_value: 'false'
@@ -664,7 +693,11 @@ globals:
   - id: nq_urgent
     type: std::vector<bool>
   - id: nq_time
-    type: std::vector<std::string>
+    type: std::vector<uint32_t>
+  # Serialized queue, restored after a reboot (see pixizhi_ui.h).
+  - id: nq_store
+    type: std::array<char, 1536>
+    restore_value: true
   - id: notif_led_on
     type: bool
     initial_value: "false"
@@ -678,6 +711,19 @@ globals:
   - id: timer_left
     type: int
     initial_value: "300"
+  # Running timer: monotonic end for counting, UTC end for reboot restore and HA.
+  - id: timer_end_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: timer_end_epoch
+    type: uint32_t
+    restore_value: true
+    initial_value: "0"
+  # Paused timer: remaining seconds (0 = not paused).
+  - id: timer_paused_left
+    type: int
+    restore_value: true
+    initial_value: "0"
   - id: timer_running
     type: bool
     initial_value: "false"
@@ -717,6 +763,32 @@ globals:
         int b = id(night_end).hour * 3600 + id(night_end).minute * 60 + id(night_end).second;
         if (a == b) return false;
         return (a < b) ? (n >= a && n < b) : (n >= a || n < b);
+      }
+  # True only while the API link is up and the blueprint has synced recently.
+  - id: audio_busy
+    type: std::function<bool()>
+    initial_value: |-
+      []() -> bool {
+        return !id(box_speaker).is_stopped() ||
+          id(ball_media_player).state == media_player::MEDIA_PLAYER_STATE_PLAYING ||
+          id(ball_media_player).state == media_player::MEDIA_PLAYER_STATE_ANNOUNCING;
+      }
+  - id: battery_low
+    type: std::function<bool()>
+    initial_value: |-
+      []() -> bool {
+        auto p = id(battery_percentage).state;
+        return !std::isnan(p) && p <= id(low_battery_level).state && !id(battery_charging).state;
+      }
+  - id: dimmed_since
+    type: uint32_t
+    initial_value: "0"
+  - id: ha_online
+    type: std::function<bool()>
+    initial_value: |-
+      []() -> bool {
+        if (!api::global_api_server->is_connected()) return false;
+        return id(ui_last_sync) != 0 && (uint32_t)(millis() - id(ui_last_sync)) <= pixizhi::HA_STALE_MS;
       }
   - id: wheel_rgb
     type: int
@@ -779,6 +851,16 @@ globals:
   - id: gs_start_ms
     type: uint32_t
     initial_value: "0"
+
+# --- DEEP STANDBY ---------------------------------------------------------------
+# The touch controller pulls its interrupt line low on a touch, which wakes the chip.
+deep_sleep:
+  id: deep_standby
+  wakeup_pin:
+    number: GPIO12
+    inverted: true
+    allow_other_uses: true
+  wakeup_pin_mode: INVERT_WAKEUP
 
 # --- BUSES --------------------------------------------------------------------
 i2c:
@@ -949,6 +1031,23 @@ media_player:
       - script.execute: update_now_playing
 
 text_sensor:
+  - platform: template
+    id: timer_ends_sensor
+    name: Timer Ends
+    icon: mdi:timer-sand
+    device_class: timestamp
+    update_interval: never
+  - platform: template
+    id: latest_version
+    name: Latest Release
+    icon: mdi:github
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: timer_state_sensor
+    name: Timer State
+    icon: mdi:timer-outline
+    update_interval: never
   - platform: sendspin
     id: sendspin_pairing_code
     name: Sendspin Pairing Code
@@ -1217,6 +1316,37 @@ number:
     step: 5
     mode: box
   - platform: template
+    id: low_battery_level
+    name: Low Battery Warning
+    icon: mdi:battery-alert-variant-outline
+    entity_category: config
+    unit_of_measurement: "%"
+    optimistic: true
+    restore_value: true
+    initial_value: 15
+    min_value: 0
+    max_value: 50
+    step: 5
+    mode: box
+    on_value:
+      - script.execute: draw_dot_clock
+  # 0 disables deep standby. Wakes on touch; HA, music and notifications are
+  # offline while asleep. Never sleeps on the charger, while playing, during a
+  # running timer, with an urgent alert, or while the siren is on.
+  - platform: template
+    id: deep_standby_after
+    name: Deep Standby After
+    icon: mdi:power-sleep
+    entity_category: config
+    unit_of_measurement: min
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+    min_value: 0
+    max_value: 240
+    step: 5
+    mode: box
+  - platform: template
     id: standby_brightness
     name: Standby Brightness
     icon: mdi:brightness-4
@@ -1255,6 +1385,12 @@ button:
   - platform: restart
     name: Restart
     entity_category: config
+  - platform: template
+    name: Check for Update
+    icon: mdi:update
+    entity_category: diagnostic
+    on_press:
+      - script.execute: check_update
 
 # --- BATTERY + SWIPE SENSORS --------------------------------------------------
 sensor:
@@ -1276,9 +1412,23 @@ sensor:
           send_first_at: 1
       - throttle: 1min
     on_value:
-      - sensor.template.publish:
-          id: battery_percentage
-          state: !lambda return x;
+      - lambda: |-
+          // Speaker load sags the cell voltage; keep the last idle reading during playback.
+          if (id(audio_busy)()) return;
+          id(battery_percentage).publish_state(x);
+          // Charging estimate: no charger pin is exposed, so use the idle voltage trend.
+          static float history[5] = {0, 0, 0, 0, 0};  // one sample per minute (throttle)
+          static int filled = 0;
+          for (int i = 4; i > 0; i--) history[i] = history[i - 1];
+          history[0] = x;
+          if (filled < 5) filled++;
+          bool charging = id(battery_charging).state;
+          if (x >= 4.17f) charging = true;
+          else if (filled == 5 && x - history[4] >= 0.04f) charging = true;
+          else if (filled == 5 && history[4] - x >= 0.02f) charging = false;
+          else if (x < 4.05f && filled == 5 && x - history[4] < 0.01f) charging = false;
+          if (charging != id(battery_charging).state) id(battery_charging).publish_state(charging);
+      - script.execute: draw_dot_clock
 
   - platform: template
     id: battery_percentage
@@ -1308,6 +1458,16 @@ sensor:
 
 binary_sensor:
   - platform: template
+    id: battery_charging
+    name: Charging (estimated)
+    device_class: battery_charging
+    entity_category: diagnostic
+  - platform: template
+    id: update_available
+    name: Firmware Update Available
+    device_class: update
+    entity_category: diagnostic
+  - platform: template
     id: swipe_left
     name: Swipe Left
     icon: mdi:gesture-swipe-left
@@ -1328,7 +1488,9 @@ binary_sensor:
 touchscreen:
   - platform: cst816
     id: my_touchscreen
-    interrupt_pin: GPIO12
+    interrupt_pin:
+      number: GPIO12
+      allow_other_uses: true
     reset_pin: GPIO6
     display: main_display
     i2c_id: bus_b
@@ -1337,14 +1499,14 @@ touchscreen:
           if (id(sendspin_pairing_visible)) return;
           id(gs_touch_active)=true;
           id(ui_touch_view)=id(ui_view);id(ui_touch_slot)=id(cur_slot);id(ui_touch_overlay)=id(overlay);
-          id(gs_clock_origin)=id(overlay)==0 && id(ui_view)==0 && id(cur_slot)<0;
+          id(gs_clock_origin)=id(overlay)==pixizhi::OVERLAY_NONE && id(ui_view)==pixizhi::VIEW_STANDBY && id(cur_slot)<0;
           id(ui_wake_only)=id(bl_dimmed);
           id(gs_start_x)=touch.x;id(gs_start_y)=touch.y;id(gs_last_x)=touch.x;id(gs_last_y)=touch.y;
           id(gs_start_ms)=millis();id(gs_touch_id)=touch.id;id(gs_max_move)=0;
           float rx=touch.x-120.0f,ry=touch.y-120.0f;
           bool dial=id(gs_clock_origin);
           int s=id(cur_slot);
-          if(id(ui_view)==2 && s>=0 && s<6 && id(slot_seen)[s]!=0 && (uint32_t)(millis()-id(slot_seen)[s])<45000 &&
+          if(id(ui_view)==pixizhi::VIEW_SLOT && s>=0 && s<6 && id(slot_seen)[s]!=0 && (uint32_t)(millis()-id(slot_seen)[s])<45000 &&
              id(slot_state)[s]!="unknown" && id(slot_state)[s]!="unavailable") {
             auto &e=id(slot_eid)[s];bool music=e.rfind("media_player.",0)==0,climate=e.rfind("climate.",0)==0;
             dial=(music&&(id(slot_features)[s]&4)) || (climate&&(id(slot_features)[s]&1)) || id(slot_dimmable)[s];
@@ -1353,7 +1515,7 @@ touchscreen:
             id(ui_dial_value)=id(ui_dial_base);
           }
           // Bottom gap is reserved for navigation and large buttons, not dial capture.
-          id(gs_ring_candidate)=!id(ui_wake_only)&&id(overlay)==0&&dial&&rx*rx+ry*ry>=94.0f*94.0f&&!(touch.y>185&&touch.x>70&&touch.x<170);
+          id(gs_ring_candidate)=!id(ui_wake_only)&&id(overlay)==pixizhi::OVERLAY_NONE&&dial&&rx*rx+ry*ry>=94.0f*94.0f&&!(touch.y>185&&touch.x>70&&touch.x<170);
           id(gs_rotating)=false;id(gs_turn)=0;id(gs_angle)=atan2f(ry,rx);id(gs_last_apply)=0;
           id(gs_base_brightness)=id(is_night)()?id(night_brightness).state/100.0f:id(screen_light).remote_values.get_brightness();id(gs_target_brightness)=id(gs_base_brightness);
           if(id(bl_dimmed)){id(bl_dimmed)=false;id(apply_backlight).execute();}
@@ -1392,12 +1554,12 @@ touchscreen:
           const int px=id(gs_last_x), py=id(gs_last_y);
           const int dx0=px-id(gs_start_x),dy0=py-id(gs_start_y);
           const uint32_t held_ms=millis()-id(gs_start_ms);
-          if(id(overlay)==1) {
+          if(id(overlay)==pixizhi::OVERLAY_NOTIFICATIONS) {
             if(std::abs(dy0)>=30) {id(notification_line)=std::max(0,id(notification_line)+(dy0<0?2:-2));id(ui_render).execute();}
             else if(id(gs_max_move)<=16) id(notif_dismiss).execute(held_ms>=1000);
             return;
           }
-          if(id(overlay)==2) {
+          if(id(overlay)==pixizhi::OVERLAY_TIMER) {
             if(id(gs_max_move)>16)return;
             if(py>207){id(ui_home).execute();return;}
             if(py>=170){if(held_ms>=1000)id(timer_reset).execute();else id(timer_main).execute();return;}
@@ -1405,32 +1567,38 @@ touchscreen:
               id(timer_set_min)=std::max(1,std::min(60,id(timer_set_min)+(px<120?-1:1)));
               id(timer_left)=id(timer_set_min)*60;id(timer_ui).execute();}return;
           }
-          if(id(cur_slot)==6 && id(ui_view)==0) {
+          if(id(cur_slot)==pixizhi::SLOT_PIZZA && id(ui_view)==pixizhi::VIEW_STANDBY) {
+            if(std::abs(dx0)>=34&&std::abs(dx0)>std::abs(dy0)){
+              int pages=id(pizza_page_count)();
+              if(pages>1){id(pizza_pg)=(id(pizza_pg)+(dx0<0?1:pages-1))%pages;id(pizza_sel)=-1;id(ui_render).execute();}
+              return;
+            }
             if(id(gs_max_move)>16)return;
             if(py>207){id(ui_home).execute();return;}
             int dx=px-120,dy=py-120;
             if(std::abs(dx)<30&&std::abs(dy)<30){id(ui_home).execute();return;}
             id(pizza_sel)=std::abs(dy)>=std::abs(dx)?(dy<0?0:2):(dx>0?1:3);
+            if(id(pizza_labels)[id(pizza_pg)*pixizhi::PIZZA_PAGE_SIZE+id(pizza_sel)].empty()){id(pizza_sel)=-1;return;}
             id(pizza_fire).execute();id(ui_render).execute();return;
           }
-          if((id(ui_view)==4||id(ui_view)==5)&&std::abs(dy0)>=30&&std::abs(dy0)>std::abs(dx0)) {
+          if((id(ui_view)==pixizhi::VIEW_HEATING_LIST||id(ui_view)==pixizhi::VIEW_CATEGORY_LIST)&&std::abs(dy0)>=30&&std::abs(dy0)>std::abs(dx0)) {
             if(dy0<0)id(pulse_swipe_up).execute();else id(pulse_swipe_down).execute();
             if(id(ui_gesture_mode)==1||id(ui_gesture_mode)==2)return;
-            int count=0;for(auto &e:id(slot_eid))if(id(ui_view)==4?e.rfind("climate.",0)==0:id(ui_category)==0?(e.rfind("light.",0)==0||e.rfind("switch.",0)==0):e.rfind("media_player.",0)==0)count++;
+            int count=0;for(auto &e:id(slot_eid))if(id(ui_view)==pixizhi::VIEW_HEATING_LIST?e.rfind("climate.",0)==0:id(ui_category)==0?(e.rfind("light.",0)==0||e.rfind("switch.",0)==0):e.rfind("media_player.",0)==0)count++;
             id(ui_list_offset)=std::max(0,std::min(std::max(0,count-2),id(ui_list_offset)+(dy0<0?1:-1)));
             id(ui_scroll_ms)=millis();id(ui_render).execute();return;
           }
-          if((id(ui_view)==4||id(ui_view)==5)&&std::abs(dx0)>=30&&std::abs(dx0)>std::abs(dy0))return;
+          if((id(ui_view)==pixizhi::VIEW_HEATING_LIST||id(ui_view)==pixizhi::VIEW_CATEGORY_LIST)&&std::abs(dx0)>=30&&std::abs(dx0)>std::abs(dy0))return;
           // Existing overlay widgets retain their own buttons. No global gesture click-through.
-          if(id(overlay)!=0)return;
-          if(id(ui_view)==0 && !id(gs_clock_origin))return;
+          if(id(overlay)!=pixizhi::OVERLAY_NONE)return;
+          if(id(ui_view)==pixizhi::VIEW_STANDBY && !id(gs_clock_origin))return;
           int dx=id(gs_last_x)-id(gs_start_x),dy=id(gs_last_y)-id(gs_start_y);
           uint32_t dt=millis()-id(gs_start_ms);int ax=std::abs(dx),ay=std::abs(dy);
           bool dashboard=id(ui_view)>0;
           if(dt<=1500&&(ax>=34||ay>=34)){
             // A rejected rim interaction is consumed, never converted into a swipe.
             int rx=id(gs_start_x)-120,ry=id(gs_start_y)-120;
-            if(rx*rx+ry*ry>=94*94 && (id(gs_clock_origin)||id(ui_view)==2))return;
+            if(rx*rx+ry*ry>=94*94 && (id(gs_clock_origin)||id(ui_view)==pixizhi::VIEW_SLOT))return;
             if(ax>=ay){if(dx<0)id(pulse_swipe_left).execute();else id(pulse_swipe_right).execute();}
             else{if(dy<0)id(pulse_swipe_up).execute();else id(pulse_swipe_down).execute();}
             if(id(ui_gesture_mode)==1||id(ui_gesture_mode)==2)return;
@@ -1443,8 +1611,8 @@ touchscreen:
               } else if(v==7){int q=id(ui_status_detail);id(ui_status_detail)=(q+(dx<0?1:5))%6;id(ui_render).execute();}
               else if(v==0||v==2)id(ui_cycle).execute(dx<0?1:-1);
             }else if(dy>0)id(ui_back).execute();
-            else if(v==0)id(ui_open).execute(6);
-            else if(v==2){int s=id(cur_slot);if(s>=0&&s<6){auto &e=id(slot_eid)[s];if(e.rfind("climate.",0)==0)id(ui_open).execute(9);else if(e.rfind("media_player.",0)==0)id(ui_open).execute(10);else id(ui_colors_open).execute();}}
+            else if(v==0)id(ui_open).execute(pixizhi::VIEW_MORE);
+            else if(v==2){int s=id(cur_slot);if(s>=0&&s<6){auto &e=id(slot_eid)[s];if(e.rfind("climate.",0)==0)id(ui_open).execute(pixizhi::VIEW_CLIMATE_MODES);else if(e.rfind("media_player.",0)==0)id(ui_open).execute(pixizhi::VIEW_MUSIC_OPTIONS);else id(ui_colors_open).execute();}}
             return;
           }
           if(id(gs_max_move)>16)return;
@@ -1454,12 +1622,12 @@ touchscreen:
           if(!id(gs_clock_origin))return;
           int x=id(gs_start_x),y=id(gs_start_y);
           if(!id(nq_title).empty()&&y>193){id(open_notifications).execute();return;}
-          if(y<76&&id(status_row)>=0){id(ui_status_detail)=id(status_row);id(ui_open).execute(7);return;}
+          if(y<76&&id(status_row)>=0){id(ui_status_detail)=id(status_row);id(ui_open).execute(pixizhi::VIEW_STATUS_DETAIL);return;}
           if(y>=155&&id(standby_music_enabled)&&id(standby_state)=="playing"){
             for(int q=0;q<6;q++)if(id(slot_eid)[q]==id(standby_player)){id(cur_slot)=q;id(show_current).execute();return;}
             id(ui_category_open).execute(1);return;
           }
-          id(ui_open).execute(1);
+          id(ui_open).execute(pixizhi::VIEW_MENU);
 
 # --- DISPLAY ------------------------------------------------------------------
 display:
@@ -1517,7 +1685,7 @@ script:
       view: int
     then:
       - lambda: |-
-          id(overlay) = 0;
+          id(overlay) = pixizhi::OVERLAY_NONE;
           id(ui_view) = view;
           id(ui_list_offset) = 0;
           id(ui_scroll_ms) = millis();
@@ -1526,21 +1694,21 @@ script:
       - script.execute: ui_render
   - id: ui_home
     then:
-      - lambda: id(cur_slot) = -1;
+      - lambda: id(cur_slot) = -1; id(pizza_pg) = 0;
       - script.execute: show_current
   - id: ui_back
     then:
       - lambda: |-
-          if(id(overlay)!=0 || id(ui_view)==1) {id(ui_home).execute();return;}
-          if(id(ui_view)==8 || id(ui_view)==9 || id(ui_view)==10) {id(ui_open).execute(2);return;}
-          id(ui_open).execute(1);
+          if(id(overlay)!=pixizhi::OVERLAY_NONE || id(ui_view)==pixizhi::VIEW_MENU) {id(ui_home).execute();return;}
+          if(id(ui_view)==8 || id(ui_view)==pixizhi::VIEW_CLIMATE_MODES || id(ui_view)==pixizhi::VIEW_MUSIC_OPTIONS) {id(ui_open).execute(pixizhi::VIEW_SLOT);return;}
+          id(ui_open).execute(pixizhi::VIEW_MENU);
   - id: ui_category_open
     parameters:
       category: int
     then:
       - lambda: |-
           id(ui_category)=category;
-          if(category==2){id(ui_open).execute(4);return;}
+          if(category==2){id(ui_open).execute(pixizhi::VIEW_HEATING_LIST);return;}
           int count=0,first=-1;
           for(int i=0;i<6;i++) {
             auto &e=id(slot_eid)[i];
@@ -1548,7 +1716,7 @@ script:
             if(match){count++;if(first<0)first=i;}
           }
           if(count==1){id(cur_slot)=first;id(show_current).execute();}
-          else id(ui_open).execute(5);
+          else id(ui_open).execute(pixizhi::VIEW_CATEGORY_LIST);
   - id: ui_cycle
     parameters:
       direction: int
@@ -1556,7 +1724,7 @@ script:
       - lambda: |-
           std::vector<int> slots;
           for(int i=0;i<6;i++)if(!id(slot_eid)[i].empty())slots.push_back(i);
-          if(slots.empty()){id(ui_open).execute(1);return;}
+          if(slots.empty()){id(ui_open).execute(pixizhi::VIEW_MENU);return;}
           int pos=-1;for(int i=0;i<(int)slots.size();i++)if(slots[i]==id(cur_slot))pos=i;
           pos=pos<0?(direction>0?0:slots.size()-1):(pos+direction+slots.size())%slots.size();
           id(cur_slot)=slots[pos];id(show_current).execute();
@@ -1572,7 +1740,7 @@ script:
       - if:
           condition:
             lambda: |-
-              return slot>=0 && slot<6 && !id(slot_eid)[slot].empty() && id(slot_seen)[slot]!=0 &&
+              return id(ha_online)() && slot>=0 && slot<6 && !id(slot_eid)[slot].empty() && id(slot_seen)[slot]!=0 &&
                 (uint32_t)(millis()-id(slot_seen)[slot])<45000 &&
                 id(slot_state)[slot]!="unavailable" && id(slot_state)[slot]!="unknown";
           then:
@@ -1708,7 +1876,7 @@ script:
                         entity_id: !lambda return id(slot_eid)[slot];
                         source: !lambda return option;
           else:
-            - lambda: id(ui_message)="HA UNAVAILABLE"; id(ui_message_until)=millis()+2000;
+            - lambda: id(ui_message)=id(ha_online)()?"HA UNAVAILABLE":"HA OFFLINE"; id(ui_message_until)=millis()+2000;
       - script.execute: ui_render
   - id: ui_temperature
     parameters:
@@ -1723,7 +1891,7 @@ script:
   - id: ui_dial_apply
     then:
       - lambda: |-
-          int s=id(cur_slot);if(s<0||s>=6||id(ui_view)!=2)return;
+          int s=id(cur_slot);if(s<0||s>=6||id(ui_view)!=pixizhi::VIEW_SLOT)return;
           auto &e=id(slot_eid)[s];float span=100;
           float lo=1,hi=100,step=1;
           if(e.rfind("media_player.",0)==0){lo=0;hi=id(ui_volume_limit);}
@@ -1748,13 +1916,13 @@ script:
           int v=id(ui_view),s=id(cur_slot);
           if(y>=207 && x>=91 && x<=149){id(ui_home).execute();return;}
           if(v==1){if(y>=43&&y<=110)id(ui_category_open).execute(x<120?0:1);
-            else if(y>=116&&y<=187){if(x<120)id(ui_category_open).execute(2);else id(ui_open).execute(6);}return;}
+            else if(y>=116&&y<=187){if(x<120)id(ui_category_open).execute(2);else id(ui_open).execute(pixizhi::VIEW_MORE);}return;}
           if(v==6){if(y>=52&&y<=112){if(x<120)id(open_notifications).execute();else id(open_timer).execute();}
-            else if(y>=120&&y<=185){if(x<120){id(cur_slot)=6;id(show_current).execute();}else id(ui_open).execute(3);}return;}
+            else if(y>=120&&y<=185){if(x<120){id(cur_slot)=6;id(show_current).execute();}else id(ui_open).execute(pixizhi::VIEW_HEATING_HOME);}return;}
           if(v==3){
             if(y>=55&&y<92){id(ui_category_open).execute(0);return;}
             if(y>=92&&y<163){int n=(y-92)/31,r=0;for(int q=0;q<6;q++)if(id(slot_eid)[q].rfind("climate.",0)==0){if(r++==n){id(cur_slot)=q;id(show_current).execute();return;}}}
-            if(y>=173&&y<207){int active=-1;for(int q=0;q<6;q++)if(id(status_active)[q]&&(active<0||id(status_priority)[q]>id(status_priority)[active]))active=q;if(active>=0){id(ui_status_detail)=active;id(ui_open).execute(7);}}return;
+            if(y>=173&&y<207){int active=-1;for(int q=0;q<6;q++)if(id(status_active)[q]&&(active<0||id(status_priority)[q]>id(status_priority)[active]))active=q;if(active>=0){id(ui_status_detail)=active;id(ui_open).execute(pixizhi::VIEW_STATUS_DETAIL);}}return;
           }
           if((v==4||v==5)&&y>=190&&y<=211){id(ui_list_offset)++;id(ui_scroll_ms)=millis();id(ui_render).execute();return;}
           if(v==4||v==5){std::vector<int> rows;for(int q=0;q<6;q++){auto &e=id(slot_eid)[q];
@@ -1779,12 +1947,12 @@ script:
             if(y>=128&&y<=178){if(x<87&&(f&16))id(ui_command).execute(s,11,0,"media_previous_track");
               else if(x>153&&(f&32))id(ui_command).execute(s,11,0,"media_next_track");
               else if(x>=87&&x<=153){bool playing=id(slot_pending)[s]==5?id(slot_expected)[s]>0:id(slot_state)[s]=="playing";if((playing&&(f&1))||(!playing&&(f&(512|16384))))id(ui_command).execute(s,5,playing?0:1,"");}}
-            else if(y>=55&&y<=123){id(ui_open).execute(10);}
+            else if(y>=55&&y<=123){id(ui_open).execute(pixizhi::VIEW_MUSIC_OPTIONS);}
           } else {
             if(y>=145&&y<=181&&(x<95||x>145)&&(id(slot_features)[s]&1)){
               float t=id(slot_pending)[s]==4?id(slot_expected)[s]:id(slot_ttarget)[s];float step=id(slot_step)[s];
               t=fmaxf(id(slot_tmin)[s],fminf(id(slot_tmax)[s],t+(x<120?-step:step)));id(ui_temperature).execute(s,t);
-            } else if(y>=183&&y<=206)id(ui_open).execute(9);
+            } else if(y>=183&&y<=206)id(ui_open).execute(pixizhi::VIEW_CLIMATE_MODES);
           }
   - id: ui_colors_open
     then:
@@ -1843,8 +2011,8 @@ script:
   - id: ui_paint_frame
     then:
       - lambda: |-
-          if (!id(ui_ready) || (id(overlay)==0 && id(ui_view)==0 && id(cur_slot)!=6) || id(overlay)>2) return;
-          lv_obj_t *cv = id(overlay)==1 ? id(notif_canvas) : id(overlay)==2 ? id(timer_canvas) : id(cur_slot)==6 && id(ui_view)==0 ? id(pizza_canvas) : id(ui_canvas);
+          if (!id(ui_ready) || (id(overlay)==pixizhi::OVERLAY_NONE && id(ui_view)==pixizhi::VIEW_STANDBY && id(cur_slot)!=pixizhi::SLOT_PIZZA) || id(overlay)>2) return;
+          lv_obj_t *cv = id(overlay)==pixizhi::OVERLAY_NOTIFICATIONS ? id(notif_canvas) : id(overlay)==pixizhi::OVERLAY_TIMER ? id(timer_canvas) : id(cur_slot)==pixizhi::SLOT_PIZZA && id(ui_view)==pixizhi::VIEW_STANDBY ? id(pizza_canvas) : id(ui_canvas);
           if (cv == nullptr) return;
           lv_draw_buf_t *buf = lv_canvas_get_draw_buf(cv);
           if (buf == nullptr || buf->data == nullptr) return;
@@ -1984,13 +2152,14 @@ script:
           auto footer = [&]() {icon("home",120,214,2,accent);};
           auto stale = [&](int s) {return id(slot_seen)[s]==0 || (uint32_t)(millis()-id(slot_seen)[s])>45000;};
           auto available = [&](int s) {return !stale(s) && id(slot_state)[s]!="unavailable" && id(slot_state)[s]!="unknown";};
-          int view=id(overlay)==1?11:id(overlay)==2?12:id(cur_slot)==6&&id(ui_view)==0?13:id(ui_view), s=id(cur_slot);
+          int view=id(overlay)==pixizhi::OVERLAY_NOTIFICATIONS?11:id(overlay)==pixizhi::OVERLAY_TIMER?12:id(cur_slot)==pixizhi::SLOT_PIZZA&&id(ui_view)==pixizhi::VIEW_STANDBY?13:id(ui_view), s=id(cur_slot);
           if(view==11) {
            text("ALERTS",120,28,2,white,160);
            if(id(nq_title).empty()){text("ALL CLEAR",120,112,2,accent,170);footer();}
            else {
             bool urgent=id(nq_urgent)[0];uint32_t ink=urgent?0xFF2A2A:id(nq_color)[0];
-            text("1 / "+std::to_string(id(nq_title).size()),120,47,1,dim,100);
+            {auto tn=id(ha_time).now();std::string age=pixizhi::age_label(id(nq_time)[0],tn.is_valid()?(uint32_t)tn.timestamp:0);
+             text("1 / "+std::to_string(id(nq_title).size())+(age.empty()?"":"  "+age),120,47,1,dim,150);}
             icon(id(nq_icon)[0],120,65,3,ink);
             text(id(nq_title)[0],120,94,2,white,188,true);
             std::string msg=ascii(id(nq_msg)[0]);std::vector<std::string> lines;
@@ -2014,11 +2183,15 @@ script:
           } else if(view==13) {
            text("ACTIONS",120,24,2,white,168);
            int xs[]={120,188,120,52},ys[]={51,105,159,105};
+           int pages=id(pizza_page_count)();if(id(pizza_pg)>=pages)id(pizza_pg)=0;
+           int base=id(pizza_pg)*pixizhi::PIZZA_PAGE_SIZE;
            for(int k=0;k<4;k++) {
+            if(id(pizza_labels)[base+k].empty())continue;
             uint32_t ink=k==id(pizza_sel)?white:accent;
-            icon(id(pizza_keys)[k],xs[k],ys[k],3,ink);
-            text(id(pizza_labels)[k],xs[k],ys[k]+26,1,ink,k==1||k==3?70:110);
+            icon(id(pizza_keys)[base+k],xs[k],ys[k],3,ink);
+            text(id(pizza_labels)[base+k],xs[k],ys[k]+26,1,ink,k==1||k==3?70:110);
            }
+           if(pages>1)for(int p=0;p<pages;p++)rect(120-pages*5+p*10+1,200,6,6,p==id(pizza_pg)?white:dim);
            icon("home",120,108,3,dim);footer();
           } else if(view==1) {
            icon("light",77,43,6,accent); text("LIGHTS",77,94,1,white,80);
@@ -2143,7 +2316,7 @@ script:
            else if(pending)text("SENDING",120,199,1,dim,120);
            footer();
           }
-          if((uint32_t)(millis()-id(ui_last_sync))>45000 || id(ui_last_sync)==0)text("HA OFFLINE",120,15,1,dim,120);
+          if(!id(ha_online)())text(wifi::global_wifi_component->is_connected()?"HA OFFLINE":"WIFI OFFLINE",120,15,1,dim,120);
           if(!id(ui_message).empty() && (int32_t)(id(ui_message_until)-millis())>0) {
            rect(34,195,172,14,0);text(id(ui_message),120,198,1,white,168);
           }
@@ -2411,8 +2584,8 @@ script:
 
           auto now = id(ha_time).now();
           // ---- weather row (icon + temperature) ----
-          if(id(ui_last_sync)==0 || (uint32_t)(millis()-id(ui_last_sync))>45000) {
-            std::string msg="HA OFFLINE";float p=3.0f;int cols=width(msg,false);
+          if(!id(ha_online)()) {
+            std::string msg=wifi::global_wifi_component->is_connected()?"HA OFFLINE":"WIFI OFFLINE";float p=3.0f;int cols=width(msg,false);
             text(msg,false,120-cols*p/2+p/2,51,p,1.1f);
           } else if (id(status_row) < 0 && id(w_ok)) {
             const std::string &c = id(w_cond);
@@ -2518,6 +2691,9 @@ script:
           if (!id(nq_title).empty()) {
             std::string v=std::to_string(id(nq_title).size())+" ALERT";con=lv_color_hex(ON[ci]);
             int cols=width(v,false);text(v,false,120-cols*2.5f/2+1.25f,207,2.5f,1.0f);
+          } else if (id(battery_low)()) {
+            std::string v="LOW BATTERY "+std::to_string((int)id(battery_percentage).state)+"%";con=lv_color_hex(0xFF2A2A);
+            int cols=width(v,false);text(v,false,120-cols*2.5f/2+1.25f,207,2.5f,1.0f);
           }
           if ((int32_t)(id(clock_brightness_until)-millis())>0) {
             std::string v=std::to_string((int)roundf(id(gs_target_brightness)*100))+"%";con=lv_color_hex(ON[ci]);
@@ -2616,13 +2792,13 @@ script:
     then:
       - lambda: id(clock_brightness_until) = 0;
       - lambda: |-
-          id(overlay) = 0;
+          id(overlay) = pixizhi::OVERLAY_NONE;
           id(ui_view) = id(cur_slot) >= 0 && id(cur_slot) < 6 ? 2 : 0;
           id(ui_scroll_ms) = millis();
           id(ui_scroll_tick) = -1;
       - if:
           condition:
-            lambda: return id(cur_slot) == 6;
+            lambda: return id(cur_slot) == pixizhi::SLOT_PIZZA;
           then:
             - lvgl.page.show: pizza_page
           else:
@@ -2687,7 +2863,7 @@ script:
                 event: esphome.pixizhi_pizza
                 data:
                   node: ${name}
-                  slice: !lambda return esphome::to_string(id(pizza_sel) + 1);
+                  slice: !lambda return esphome::to_string(id(pizza_pg) * pixizhi::PIZZA_PAGE_SIZE + id(pizza_sel) + 1);
 
   # LED notification: flash, then put the LED back the way it was
   - id: flash_led
@@ -2784,7 +2960,7 @@ script:
           condition:
             lambda: return !id(nq_title).empty();
           then:
-            - lambda: id(overlay) = 1; id(notification_line) = 0;
+            - lambda: id(overlay) = pixizhi::OVERLAY_NOTIFICATIONS; id(notification_line) = 0;
             - script.execute: notif_fill
             - lvgl.page.show:
                 id: notif_page
@@ -2808,6 +2984,7 @@ script:
           id(nq_color).erase(id(nq_color).begin());
           id(nq_urgent).erase(id(nq_urgent).begin());
           id(nq_time).erase(id(nq_time).begin());
+      - script.execute: nq_save
       - if:
           condition:
             lambda: return id(nq_title).empty();
@@ -2824,7 +3001,7 @@ script:
       - script.execute: notif_led
       - if:
           condition:
-            lambda: return id(overlay) == 1;
+            lambda: return id(overlay) == pixizhi::OVERLAY_NOTIFICATIONS;
           then:
             - lambda: id(cur_slot) = -1;
             - script.execute: show_current
@@ -2842,7 +3019,7 @@ script:
             - script.execute: wake_screen
             - if:
                 condition:
-                  lambda: return id(overlay) != 1;
+                  lambda: return id(overlay) != pixizhi::OVERLAY_NOTIFICATIONS;
                 then:
                   - script.execute: open_notifications
             - script.execute: play_chime
@@ -2852,7 +3029,7 @@ script:
   - id: open_timer
     then:
       - lambda: |-
-          id(overlay) = 2;
+          id(overlay) = pixizhi::OVERLAY_TIMER;
           if (!id(timer_running) && !id(timer_done) && id(timer_left) <= 0) id(timer_left) = id(timer_set_min) * 60;
       - script.execute: timer_ui
       - lvgl.page.show:
@@ -2873,8 +3050,8 @@ script:
             - script.execute: timer_reset
           else:
             - lambda: |-
-                if (id(timer_running)) id(timer_running) = false;
-                else if (id(timer_left) > 0) id(timer_running) = true;
+                if (id(timer_running)) id(timer_pause).execute();
+                else if (id(timer_left) > 0) id(timer_start).execute(id(timer_left));
             - script.execute: timer_ui
             - script.execute: update_clock
 
@@ -2886,6 +3063,10 @@ script:
           id(timer_running) = false;
           id(timer_done) = false;
           id(timer_left) = id(timer_set_min) * 60;
+          id(timer_end_ms) = 0;
+          id(timer_end_epoch) = 0;
+          id(timer_paused_left) = 0;
+          id(timer_publish).execute();
           if (was_done && !id(nq_title).empty()) id(notif_led).execute();
           else if (was_done) { auto call = id(led).turn_off(); call.perform(); }
       - if:
@@ -2895,6 +3076,127 @@ script:
             - media_player.stop: ball_media_player
       - script.execute: timer_ui
       - script.execute: update_clock
+
+  - id: timer_start
+    parameters:
+      seconds: int
+    then:
+      - lambda: |-
+          id(timer_left) = std::max(1, (int) seconds);
+          id(timer_end_ms) = millis() + (uint32_t) id(timer_left) * 1000;
+          auto now = id(ha_time).now();
+          id(timer_end_epoch) = now.is_valid() ? (uint32_t) now.timestamp + id(timer_left) : 0;
+          id(timer_paused_left) = 0;
+          id(timer_running) = true;
+          id(timer_done) = false;
+      - script.execute: timer_publish
+
+  - id: timer_pause
+    then:
+      - lambda: |-
+          id(timer_running) = false;
+          id(timer_paused_left) = std::max(1, id(timer_left));
+          id(timer_end_ms) = 0;
+          id(timer_end_epoch) = 0;
+      - script.execute: timer_publish
+
+  # Recompute from the end time instead of counting ticks, so the timer never drifts.
+  - id: timer_tick
+    then:
+      - lambda: |-
+          if (!id(timer_running) || id(timer_end_ms) == 0) return;
+          int32_t ms = (int32_t)(id(timer_end_ms) - millis());
+          id(timer_left) = ms <= 0 ? 0 : (ms + 999) / 1000;
+          if (id(timer_left) <= 0) {
+            id(timer_running) = false;
+            id(timer_done) = true;
+            id(timer_end_ms) = 0;
+            id(timer_end_epoch) = 0;
+            id(timer_paused_left) = 0;
+            id(timer_publish).execute();
+          }
+
+  # After a reboot: resume a running timer once the clock is valid, or a paused one at once.
+  - id: timer_restore
+    then:
+      - lambda: |-
+          if (id(timer_running) || id(timer_done)) return;
+          if (id(timer_paused_left) > 0) {
+            id(timer_left) = id(timer_paused_left);
+            id(timer_publish).execute();
+            return;
+          }
+          if (id(timer_end_epoch) == 0) return;
+          auto now = id(ha_time).now();
+          if (!now.is_valid()) return;
+          int left = pixizhi::timer_remaining(id(timer_end_epoch), (uint32_t) now.timestamp);
+          if (left > 0) {
+            id(timer_left) = left;
+            id(timer_end_ms) = millis() + (uint32_t) left * 1000;
+            id(timer_running) = true;
+          } else {
+            // It expired while the device was off: ring now so it is not silently lost.
+            id(timer_left) = 1;
+            id(timer_end_ms) = millis();
+            id(timer_running) = true;
+          }
+          id(timer_publish).execute();
+
+  - id: timer_publish
+    then:
+      - lambda: |-
+          if (id(timer_running) && id(timer_end_epoch) != 0) {
+            time_t t = (time_t) id(timer_end_epoch);
+            struct tm g; gmtime_r(&t, &g);
+            char b[32]; strftime(b, sizeof(b), "%Y-%m-%dT%H:%M:%S+00:00", &g);
+            id(timer_ends_sensor).publish_state(b);
+          } else {
+            id(timer_ends_sensor).publish_state("unknown");
+          }
+          id(timer_state_sensor).publish_state(id(timer_done) ? "done" : id(timer_running) ? "running" :
+              id(timer_paused_left) > 0 ? "paused" : "idle");
+
+  # Redraw both screens immediately when the API link drops or returns.
+  - id: link_changed
+    then:
+      - script.execute: draw_dot_clock
+      - script.execute: ui_render
+
+  - id: nq_save
+    then:
+      - lambda: |-
+          std::vector<pixizhi::StoredNotification> items;
+          for (size_t i = 0; i < id(nq_title).size(); i++) {
+            pixizhi::StoredNotification n;
+            n.title = id(nq_title)[i]; n.msg = id(nq_msg)[i]; n.icon = id(nq_icon)[i];
+            n.color = id(nq_color)[i]; n.urgent = id(nq_urgent)[i]; n.epoch = id(nq_time)[i];
+            items.push_back(n);
+          }
+          std::array<char, pixizhi::NQ_STORE_SIZE> buf{};
+          pixizhi::nq_serialize(items, buf.data(), buf.size());
+          if (buf != id(nq_store)) id(nq_store) = buf;  // write flash only on change
+
+  - id: nq_restore
+    then:
+      - lambda: |-
+          auto items = pixizhi::nq_deserialize(id(nq_store).data(), id(nq_store).size());
+          for (auto &n : items) {
+            id(nq_title).push_back(n.title); id(nq_msg).push_back(n.msg); id(nq_icon).push_back(n.icon);
+            id(nq_color).push_back(n.color); id(nq_urgent).push_back(n.urgent); id(nq_time).push_back(n.epoch);
+          }
+      - if:
+          condition:
+            lambda: return !id(nq_title).empty();
+          then:
+            - script.execute: update_badge
+            - script.execute: notif_led
+            - if:
+                condition:
+                  lambda: |-
+                    for (bool u : id(nq_urgent)) if (u) return true;
+                    return false;
+                then:
+                  - script.execute: urgent_loop
 
   - id: timer_alarm
     mode: restart
@@ -2946,6 +3248,57 @@ script:
             lv_obj_invalidate(lv_screen_active());
           }
 
+  - id: enter_deep_standby
+    then:
+      - logger.log: "Entering deep standby; touch to wake"
+      - lambda: |-
+          id(nq_save).execute();
+          global_preferences->sync();
+          id(backlight_pwm).set_level(0);
+      - light.turn_off:
+          id: led
+          transition_length: 0s
+      - switch.turn_off: speaker_enable
+      - delay: 200ms
+      - deep_sleep.enter: deep_standby
+
+  # Ask GitHub for the latest release and compare it with this build's version.
+  - id: check_update
+    then:
+      - if:
+          condition:
+            wifi.connected:
+          then:
+            - http_request.get:
+                url: https://api.github.com/repos/${github_repo}/releases/latest
+                request_headers:
+                  Accept: application/vnd.github+json
+                capture_response: true
+                max_response_buffer_size: 8192
+                on_response:
+                  then:
+                    - lambda: |-
+                        if (response->status_code != 200) {
+                          // 404 means the repository has no published release yet.
+                          ESP_LOGI("update", "Release check returned HTTP %d", response->status_code);
+                          return;
+                        }
+                        std::string tag;
+                        json::parse_json(body, [&](JsonObject root) -> bool {
+                          if (root["tag_name"].is<const char *>()) tag = root["tag_name"].as<std::string>();
+                          return true;
+                        });
+                        if (tag.empty()) return;
+                        id(latest_version).publish_state(tag);
+                        bool newer = pixizhi::compare_versions(tag, ESPHOME_PROJECT_VERSION) > 0;
+                        id(update_available).publish_state(newer);
+                        ESP_LOGI("update", "Latest release %s, running %s", tag.c_str(), ESPHOME_PROJECT_VERSION);
+                on_error:
+                  then:
+                    - logger.log:
+                        level: WARN
+                        format: "Release check failed"
+
   # Safety stop: the siren switches itself off after "Siren Max Duration"
   - id: siren_timeout
     mode: restart
@@ -2955,6 +3308,11 @@ script:
 
 
 interval:
+  # Release check: once two minutes after boot, then twice a day.
+  - interval: 12h
+    startup_delay: 2min
+    then:
+      - script.execute: check_update
   - interval: 250ms
     then:
       - script.execute: audio_display_policy
@@ -2985,6 +3343,8 @@ interval:
     then:
       - lambda: |-
           if (!id(ui_ready) || id(overlay)>2 || id(audio_display_paused)) return;
+          // A black standby screen needs no frames; dirty flags repaint on wake.
+          if (id(bl_dimmed) && id(standby_brightness).state <= 0 && !id(is_night)()) return;
           // Keep the newest dirty frame; coalesce intermediate audio-time updates.
           static uint32_t last_frame = 0;
           const uint32_t now = millis();
@@ -2992,7 +3352,7 @@ interval:
               id(ball_media_player).state == media_player::MEDIA_PLAYER_STATE_PLAYING;
           if (audio_active && (uint32_t)(now - last_frame) < 100) return;
           last_frame = now;
-          if (id(ui_view) != 0 || id(overlay)==1 || id(overlay)==2 || id(cur_slot)==6) {
+          if (id(ui_view) != pixizhi::VIEW_STANDBY || id(overlay)==pixizhi::OVERLAY_NOTIFICATIONS || id(overlay)==pixizhi::OVERLAY_TIMER || id(cur_slot)==pixizhi::SLOT_PIZZA) {
             if (id(ui_frame_dirty)) {
               id(ui_frame_dirty) = false;
               id(ui_paint_frame).execute();
@@ -3006,7 +3366,7 @@ interval:
       - lambda: |-
           if(!id(ui_ready))return;
           uint32_t now=millis();bool repaint=false;
-          if(id(ui_view)==0 && id(cur_slot)<0 && id(overlay)==0 && id(standby_music_enabled) && id(standby_state)=="playing") id(draw_dot_clock).execute();
+          if(id(ui_view)==pixizhi::VIEW_STANDBY && id(cur_slot)<0 && id(overlay)==pixizhi::OVERLAY_NONE && id(standby_music_enabled) && id(standby_state)=="playing") id(draw_dot_clock).execute();
           for(int s=0;s<6;s++) {
             if(id(slot_temp_due)[s] && (int32_t)(now-id(slot_temp_due)[s])>=0) {
               id(slot_temp_due)[s]=0;id(ui_command).execute(s,4,id(slot_expected)[s],"");
@@ -3016,20 +3376,21 @@ interval:
             }
           }
           if(id(ui_message_until) && (int32_t)(now-id(ui_message_until))>=0) {id(ui_message_until)=0;id(ui_message)="";repaint=true;}
-          if(id(ui_view)!=0 && id(overlay)==0 && !id(gs_touch_active)) {
+          if(id(ui_view)!=pixizhi::VIEW_STANDBY && id(overlay)==pixizhi::OVERLAY_NONE && !id(gs_touch_active)) {
             int tick=(now-id(ui_scroll_ms))/220;
             // Only redraw a changing marquee, not every idle page.
-            int s=id(cur_slot);bool scroll=id(ui_view)==7 || (id(ui_view)==2&&s>=0&&s<6&&id(slot_eid)[s].rfind("media_player.",0)==0 && (id(slot_title)[s].size()>15||id(slot_artist)[s].size()>15));
+            int s=id(cur_slot);bool scroll=id(ui_view)==pixizhi::VIEW_STATUS_DETAIL || (id(ui_view)==pixizhi::VIEW_SLOT&&s>=0&&s<6&&id(slot_eid)[s].rfind("media_player.",0)==0 && (id(slot_title)[s].size()>15||id(slot_artist)[s].size()>15));
             if(scroll&&tick!=id(ui_scroll_tick)){id(ui_scroll_tick)=tick;repaint=true;}
             static uint32_t music_frame=0;
-            if(id(ui_view)==2&&s>=0&&s<6&&id(slot_eid)[s].rfind("media_player.",0)==0&&id(slot_state)[s]=="playing"&&now/400!=music_frame){music_frame=now/400;repaint=true;}
+            if(id(ui_view)==pixizhi::VIEW_SLOT&&s>=0&&s<6&&id(slot_eid)[s].rfind("media_player.",0)==0&&id(slot_state)[s]=="playing"&&now/400!=music_frame){music_frame=now/400;repaint=true;}
             static uint32_t last_status=0;if(now-last_status>5000){last_status=now;repaint=true;}
             if(repaint)id(ui_render).execute();
           }
   - interval: 250ms
     then:
       - lambda: |-
-          if (!id(ui_ready) || id(ui_view) != 0 || id(cur_slot) >= 0 || id(overlay) != 0 || id(gs_touch_active)) return;
+          if (!id(ui_ready) || id(ui_view) != pixizhi::VIEW_STANDBY || id(cur_slot) >= 0 || id(overlay) != pixizhi::OVERLAY_NONE || id(gs_touch_active)) return;
+          if (id(bl_dimmed) && id(standby_brightness).state <= 0 && !id(is_night)()) return;
           bool redraw = false;
           uint32_t now = millis();
           if ((uint32_t)(now - id(status_last_ms)) >= (uint32_t)id(status_seconds) * 1000) {
@@ -3060,17 +3421,24 @@ interval:
           if (id(ui_ready) && id(night_active) != id(is_night)()) id(apply_standby_style).execute();
       - if:
           condition:
+            lambda: |-
+              if (!id(bl_dimmed)) { id(dimmed_since) = 0; return false; }
+              if (id(dimmed_since) == 0) id(dimmed_since) = millis();
+              const float minutes = id(deep_standby_after).state;
+              if (!(minutes > 0) || id(battery_charging).state || id(audio_busy)() || id(timer_running) ||
+                  id(timer_done) || id(siren).state || id(sendspin_pairing_visible) || id(gs_touch_active)) return false;
+              for (bool u : id(nq_urgent)) if (u) return false;
+              return (uint32_t)(millis() - id(dimmed_since)) >= (uint32_t)(minutes * 60000.0f);
+          then:
+            - script.execute: enter_deep_standby
+      - if:
+          condition:
             lambda: return id(timer_running);
           then:
+            - script.execute: timer_tick
             - lambda: |-
-                id(timer_left)--;
-                if (id(timer_left) <= 0) {
-                  id(timer_left) = 0;
-                  id(timer_running) = false;
-                  id(timer_done) = true;
-                }
-                if (id(overlay) == 2) id(timer_ui).execute();
-                if (id(overlay) == 0 && id(cur_slot) < 0)
+                if (id(overlay) == pixizhi::OVERLAY_TIMER) id(timer_ui).execute();
+                if (id(overlay) == pixizhi::OVERLAY_NONE && id(cur_slot) < 0)
                   id(draw_dot_clock).execute();
             - if:
                 condition:
@@ -3081,7 +3449,7 @@ interval:
   - interval: 600ms
     then:
       - lambda: |-
-          if (id(overlay) != 1 || id(nq_title).empty() || !id(nq_urgent)[0]) return;
+          if (id(overlay) != pixizhi::OVERLAY_NOTIFICATIONS || id(nq_title).empty() || !id(nq_urgent)[0]) return;
           id(pulse_phase) = !id(pulse_phase);
           id(ui_render).execute();
 
@@ -3102,11 +3470,11 @@ lvgl:
     then:
       - if:
           condition:
-            lambda: return !id(sendspin_pairing_visible) && !id(gs_touch_active) && !id(bl_dimmed) && !(id(overlay) == 1 && !id(nq_urgent).empty() && id(nq_urgent)[0]) && !id(timer_done);
+            lambda: return !id(sendspin_pairing_visible) && !id(gs_touch_active) && !id(bl_dimmed) && !(id(overlay) == pixizhi::OVERLAY_NOTIFICATIONS && !id(nq_urgent).empty() && id(nq_urgent)[0]) && !id(timer_done);
           then:
             - lambda: |-
                 id(cur_slot) = -1;
-                id(overlay) = 0;
+                id(overlay) = pixizhi::OVERLAY_NONE;
                 id(bl_dimmed) = true;
             - script.execute: show_current
             - script.execute: apply_backlight
