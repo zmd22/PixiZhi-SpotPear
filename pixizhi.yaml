@@ -36,10 +36,11 @@ esphome:
       - script.execute: show_current
       - script.execute: apply_audio_output
 
-# Lets the ESPHome dashboard "Take control" of a discovered device and build it locally.
+# ESPHome "Take control" creates a small local config that pulls this file, the
+# header, components, fonts and sounds from GitHub as a package.
 dashboard_import:
   package_import_url: github://${github_repo}/pixizhi.yaml@main
-  import_full_config: true
+  import_full_config: false
 
 esp32:
   board: esp32-s3-devkitc-1

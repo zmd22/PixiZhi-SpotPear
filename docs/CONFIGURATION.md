@@ -82,6 +82,12 @@ normal use, and use HA controls during a comparison test.
   measured voltage.
 - With **Standby Brightness** at 0 %, the standby screen is not redrawn until woken.
 
+## Re-adding a device
+
+If Home Assistant asks for an encryption key for a ball it knew before, delete
+the old ESPHome entry and restart Home Assistant; it then provisions a new key
+without asking. A first-time device is never asked for a key.
+
 ## Battery ring
 
 **Battery Ring** (on by default) draws 60 dots around the clock's outer edge,
