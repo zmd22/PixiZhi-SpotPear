@@ -109,5 +109,19 @@ the browser installer to GitHub Pages (enable Pages with source **GitHub Actions
 once in the repository settings). Pre-releases are built and attached, but
 devices only follow the latest full release.
 
+While an update installs, the screen shows its progress; media and the siren
+stop first. A new image has to run for two minutes before it is confirmed. If it
+crashes or resets before that, the bootloader returns to the previous firmware
+on its own. Write release notes in the GitHub release text: its first ~250
+characters appear in Home Assistant's update dialog.
+
 A release is a public build: anything in `pixizhi.yaml` is visible to everyone.
 Never add credentials to it.
+
+## Siren
+
+The **Siren** switch plays the built-in `sounds/alarm.wav` at full volume on a loop,
+pulses the LED red and shows a full-screen **STOP** button. Everything runs on the
+device, so STOP works even if Home Assistant or the network is down. It stops on
+its own after **Siren Max Duration** (default 120 s); afterwards the previous
+volume is restored and the LED returns to its notification colour, or switches off.

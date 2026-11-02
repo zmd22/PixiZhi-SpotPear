@@ -76,6 +76,47 @@ captive_portal:
 # over verified HTTPS. USB flashing always remains possible.
 ota:
   - platform: http_request
+    on_begin:
+      - lambda: |-
+          id(media_player_stop_for_update).execute();
+          lv_label_set_text(id(update_pct), "0%");
+          lv_bar_set_value(id(update_bar), 0, LV_ANIM_OFF);
+          lv_label_set_text(id(update_note), "Keep powered");
+          lv_obj_clear_flag(id(update_card), LV_OBJ_FLAG_HIDDEN);
+          id(lvgl_comp).set_paused(false, false);
+          id(bl_dimmed) = false;
+          id(apply_backlight).execute();
+          lv_refr_now(nullptr);
+    on_progress:
+      - lambda: |-
+          static int last = -1;
+          int p = (int) x;
+          if (p == last) return;
+          last = p;
+          lv_label_set_text(id(update_pct), (esphome::to_string(p) + "%").c_str());
+          lv_bar_set_value(id(update_bar), p, LV_ANIM_OFF);
+          // The download runs inside the main loop; draw the frame now.
+          lv_refr_now(nullptr);
+    on_end:
+      - lambda: |-
+          lv_label_set_text(id(update_pct), "100%");
+          lv_bar_set_value(id(update_bar), 100, LV_ANIM_OFF);
+          lv_label_set_text(id(update_note), "Restarting");
+          lv_refr_now(nullptr);
+    on_error:
+      - lambda: |-
+          lv_label_set_text(id(update_pct), "FAILED");
+          lv_label_set_text(id(update_note), "Old firmware kept");
+          lv_refr_now(nullptr);
+      - delay: 5s
+      - lambda: lv_obj_add_flag(id(update_card), LV_OBJ_FLAG_HIDDEN);
+
+# A new image must run for two minutes before it is confirmed. If it crashes or
+# resets before then, the bootloader rolls back to the previous firmware
+# automatically (ESP-IDF app rollback, enabled by safe_mode + OTA).
+safe_mode:
+  boot_is_good_after: 2min
+  num_attempts: 5
 
 update:
   - platform: http_request
@@ -767,6 +808,9 @@ globals:
   - id: siren_prev_volume
     type: float
     initial_value: "0.5"
+  - id: siren_active
+    type: bool
+    initial_value: "false"
   - id: ui_ready
     type: bool
     initial_value: "false"
@@ -1143,33 +1187,45 @@ switch:
     icon: mdi:alarm-light
     optimistic: true
     restore_mode: ALWAYS_OFF
+    # Runs entirely on the device: the sound is baked into the firmware, and the
+    # on-screen STOP works without Home Assistant or a network.
     turn_on_action:
-      - lambda: id(siren_prev_volume) = id(ball_media_player).volume;
-      - media_player.stop: ball_media_player
-      - delay: 300ms
-      - media_player.volume_set:
-          id: ball_media_player
-          volume: 100%
-      - media_player.repeat_one: ball_media_player
-      - media_player.play_media:
-          id: ball_media_player
-          media_url: "audio-file://siren_sound"
-      - light.turn_on:
-          id: led
-          brightness: 100%
-          red: 100%
-          green: 0%
-          blue: 0%
-          effect: Fast Pulse
+      - if:
+          condition:
+            lambda: return !id(siren_active);
+          then:
+            - lambda: |-
+                // Remember the volume only on the first start, never the siren's own 100 %.
+                id(siren_prev_volume) = id(ball_media_player).volume;
+                id(siren_active) = true;
+            - script.execute: siren_show
+            - script.execute: siren_loop
+            - light.turn_on:
+                id: led
+                brightness: 100%
+                red: 100%
+                green: 0%
+                blue: 0%
+                effect: Fast Pulse
       - script.execute: siren_timeout
     turn_off_action:
       - script.stop: siren_timeout
-      - media_player.stop: ball_media_player
-      - media_player.repeat_off: ball_media_player
-      - media_player.volume_set:
-          id: ball_media_player
-          volume: !lambda return id(siren_prev_volume);
-      - light.turn_off: led
+      - script.stop: siren_loop
+      - if:
+          condition:
+            lambda: return id(siren_active);
+          then:
+            - lambda: id(siren_active) = false;
+            - media_player.stop: ball_media_player
+            - delay: 150ms
+            - media_player.volume_set:
+                id: ball_media_player
+                volume: !lambda return id(siren_prev_volume);
+            - lambda: |-
+                lv_obj_add_flag(id(siren_card), LV_OBJ_FLAG_HIDDEN);
+                // Hand the LED back to notifications, or switch it off.
+                if (id(nq_title).empty()) { auto c = id(led).turn_off(); c.perform(); id(notif_led_on) = false; }
+                else { id(notif_led_on) = false; id(notif_led).execute(); }
   # The audio-output selector manages the internal speaker amplifier.
   - platform: gpio
     id: speaker_enable
@@ -1521,7 +1577,7 @@ touchscreen:
     i2c_id: bus_b
     on_touch:
       - lambda: |-
-          if (id(sendspin_pairing_visible) || id(setup_state)==1 || id(setup_state)==2) return;
+          if (id(sendspin_pairing_visible) || id(setup_state)==1 || id(setup_state)==2 || id(siren_active)) return;
           id(gs_touch_active)=true;
           id(ui_touch_view)=id(ui_view);id(ui_touch_slot)=id(cur_slot);id(ui_touch_overlay)=id(overlay);
           id(gs_clock_origin)=id(overlay)==pixizhi::OVERLAY_NONE && id(ui_view)==pixizhi::VIEW_STANDBY && id(cur_slot)<0;
@@ -1546,7 +1602,7 @@ touchscreen:
           if(id(bl_dimmed)){id(bl_dimmed)=false;id(apply_backlight).execute();}
     on_update:
       - lambda: |-
-          if (id(sendspin_pairing_visible) || id(setup_state)==1 || id(setup_state)==2) { id(gs_touch_active)=false; return; }
+          if (id(sendspin_pairing_visible) || id(setup_state)==1 || id(setup_state)==2 || id(siren_active)) { id(gs_touch_active)=false; return; }
           if(!id(gs_touch_active))return;
           for(auto &t:touches)if(t.id==id(gs_touch_id)&&t.state>=1&&t.state<=2){
             id(gs_last_x)=t.x;id(gs_last_y)=t.y;
@@ -1567,7 +1623,7 @@ touchscreen:
           }
     on_release:
       - lambda: |-
-          if (id(sendspin_pairing_visible) || id(setup_state)==1 || id(setup_state)==2) { id(gs_touch_active)=false; return; }
+          if (id(sendspin_pairing_visible) || id(setup_state)==1 || id(setup_state)==2 || id(siren_active)) { id(gs_touch_active)=false; return; }
           if(!id(gs_touch_active))return;
           id(gs_touch_active)=false;
           if(id(ui_wake_only))return;
@@ -3341,6 +3397,46 @@ script:
       - delay: 200ms
       - deep_sleep.enter: deep_standby
 
+  # Replays the siren file until stopped. Does not depend on media repeat support.
+  - id: siren_loop
+    mode: restart
+    then:
+      - media_player.stop: ball_media_player
+      - delay: 300ms
+      - media_player.volume_set:
+          id: ball_media_player
+          volume: 100%
+      - while:
+          condition:
+            lambda: return id(siren_active);
+          then:
+            - media_player.play_media:
+                id: ball_media_player
+                media_url: "audio-file://siren_sound"
+            # Give the pipeline time to start, then wait for the clip to end.
+            - wait_until:
+                condition:
+                  lambda: return id(ball_media_player).state == media_player::MEDIA_PLAYER_STATE_PLAYING;
+                timeout: 2s
+            - wait_until:
+                condition:
+                  lambda: return id(ball_media_player).state != media_player::MEDIA_PLAYER_STATE_PLAYING;
+                timeout: 60s
+            - delay: 100ms
+
+  - id: media_player_stop_for_update
+    then:
+      - switch.turn_off: siren
+      - media_player.stop: ball_media_player
+
+  - id: siren_show
+    then:
+      - lambda: |-
+          lv_obj_clear_flag(id(siren_card), LV_OBJ_FLAG_HIDDEN);
+          id(gs_touch_active) = false;
+          id(lvgl_comp).set_paused(false, false);
+      - script.execute: wake_screen
+
   # Safety stop: the siren switches itself off after "Siren Max Duration"
   - id: siren_timeout
     mode: restart
@@ -3511,7 +3607,7 @@ lvgl:
     then:
       - if:
           condition:
-            lambda: return !id(sendspin_pairing_visible) && id(setup_state)!=1 && id(setup_state)!=2 && !id(gs_touch_active) && !id(bl_dimmed) && !(id(overlay) == pixizhi::OVERLAY_NOTIFICATIONS && !id(nq_urgent).empty() && id(nq_urgent)[0]) && !id(timer_done);
+            lambda: return !id(sendspin_pairing_visible) && id(setup_state)!=1 && id(setup_state)!=2 && !id(siren_active) && !id(gs_touch_active) && !id(bl_dimmed) && !(id(overlay) == pixizhi::OVERLAY_NOTIFICATIONS && !id(nq_urgent).empty() && id(nq_urgent)[0]) && !id(timer_done);
           then:
             - lambda: |-
                 id(cur_slot) = -1;
@@ -3542,6 +3638,87 @@ lvgl:
   # Modal above every page; underlying navigation is suppressed while visible.
   top_layer:
     widgets:
+      - obj:
+          id: siren_card
+          hidden: true
+          align: CENTER
+          width: 240
+          height: 240
+          bg_color: 0x400000
+          bg_opa: COVER
+          border_width: 0
+          pad_all: 0
+          radius: 0
+          scrollable: false
+          clickable: true
+          widgets:
+            - label:
+                align: CENTER
+                y: -50
+                text: SIREN
+                text_font: pixel_large
+                text_color: 0xFF2A2A
+            - button:
+                align: CENTER
+                y: 30
+                width: 140
+                height: 64
+                radius: 32
+                bg_color: 0xFF2A2A
+                widgets:
+                  - label:
+                      align: CENTER
+                      text: STOP
+                      text_font: pixel_medium
+                      text_color: 0x000000
+                on_click:
+                  - switch.turn_off: siren
+      - obj:
+          id: update_card
+          hidden: true
+          align: CENTER
+          width: 240
+          height: 240
+          bg_color: 0x000000
+          bg_opa: COVER
+          border_width: 0
+          pad_all: 0
+          radius: 0
+          scrollable: false
+          clickable: true
+          widgets:
+            - label:
+                align: CENTER
+                y: -62
+                text: UPDATING
+                text_font: pixel_medium
+                text_color: 0xFFB000
+            - label:
+                id: update_pct
+                align: CENTER
+                y: -8
+                text: "0%"
+                text_font: pixel_large
+                text_color: 0xFFFFFF
+            - bar:
+                id: update_bar
+                align: CENTER
+                y: 40
+                width: 160
+                height: 10
+                min_value: 0
+                max_value: 100
+                value: 0
+                bg_color: 0x303030
+                indicator:
+                  bg_color: 0xFFB000
+            - label:
+                id: update_note
+                align: CENTER
+                y: 72
+                text: "Keep powered"
+                text_font: pixel_small
+                text_color: 0xC0C0C0
       - obj:
           id: setup_card
           hidden: true

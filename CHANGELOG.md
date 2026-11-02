@@ -13,6 +13,13 @@
 - Battery ring around the clock edge (`Battery Ring` switch), hidden while charging.
 - `dashboard_import` for ESPHome "Take control".
 - Release check entities from 0.9.9 replaced by the native update entity.
+- Update screen with progress, "Restarting", or "FAILED / Old firmware kept".
+- Automatic rollback: a new image must run for two minutes before it is
+  confirmed; a crash or reset before then restores the previous firmware.
+- Release notes (release title and text) shown in Home Assistant's update dialog.
+- Siren: full-screen STOP button that works without Home Assistant, replays the
+  built-in sound reliably without relying on media repeat, keeps the original
+  volume when switched on twice, and hands the LED back to notifications.
 
 ## 0.9.9
 

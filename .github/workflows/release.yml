@@ -53,6 +53,8 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
           REPO: ${{ github.repository }}
           TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_BODY: ${{ github.event.release.body }}
         run: |
           B=.esphome/build/pixizhi/build
           mkdir -p out site
@@ -63,8 +65,14 @@ jobs:
           import json, os
           v, repo, tag, md5 = os.environ["VERSION"], os.environ["REPO"], os.environ.get("TAG") or "v" + os.environ["VERSION"], "$MD5"
           base = f"https://github.com/{repo}/releases/download/{tag}"
+          # Home Assistant shows "summary" in the update dialog (max 255 characters).
+          body = " ".join((os.environ.get("RELEASE_BODY") or "").split())
+          title = os.environ.get("RELEASE_NAME") or f"PixiZhi SpotPear {v}"
+          summary = (title + (": " + body if body else ""))
+          if len(summary) > 255:
+              summary = summary[:252].rstrip() + "..."
           ota = {"path": f"{base}/pixizhi-{v}.ota.bin", "md5": md5,
-                 "summary": f"PixiZhi SpotPear {v}",
+                 "summary": summary,
                  "release_url": f"https://github.com/{repo}/releases/tag/{tag}"}
           # Device update manifest (absolute URLs).
           json.dump({"name": "PixiZhi SpotPear", "version": v, "new_install_prompt_erase": True,
