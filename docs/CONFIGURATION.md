@@ -2,9 +2,11 @@
 
 ## Public defaults
 
-The public device name is `pixizhi`, the friendly name is PixiZhi SpotPear, and
-the timezone is `Etc/UTC`. All credentials come from an ignored `secrets.yaml`.
-Set the timezone substitution to your local IANA timezone before using schedules.
+The public device name is `pixizhi` and the friendly name is PixiZhi SpotPear.
+The firmware contains no credentials: Wi-Fi is entered through the setup hotspot
+and stored on the device; Home Assistant provisions the API encryption key when
+the device is added. Home Assistant 2026.3+ sends its timezone to the device, so
+schedules follow your HA timezone (UTC is only the fallback for older HA).
 
 The firmware contains no Home Assistant entity IDs. The screens blueprint owns
 favourite controls, standby climate sensors, standby player, weather, status,
@@ -66,7 +68,7 @@ The optional Pause Display During Audio setting defaults off. It is a diagnostic
 switch: the screen may show old information while paused. Leave it off for
 normal use, and use HA controls during a comparison test.
 
-## Power and battery (0.9.9)
+## Power and battery
 
 - **Deep Standby After** (minutes, 0 = off): after the screen has dimmed for this
   long, the device deep-sleeps and wakes on a touch. While asleep it is offline:
@@ -80,8 +82,32 @@ normal use, and use HA controls during a comparison test.
   measured voltage.
 - With **Standby Brightness** at 0 %, the standby screen is not redrawn until woken.
 
+## Battery ring
+
+**Battery Ring** (on by default) draws 60 dots around the clock's outer edge,
+clockwise from 12 o'clock: green above 50 %, amber above 20 %, red below. It is
+hidden while `Charging (estimated)` is on and is red-tinted in night mode.
+
+## Setup screen
+
+Until Wi-Fi is configured, the ball runs the open `PixiZhi Setup` hotspot and shows
+a QR code for it. After Wi-Fi connects, it shows its IP and an "add to Home
+Assistant" hint until Home Assistant connects for the first time (tap LATER to
+hide it until the next restart). A configured device whose router is down shows
+"WIFI OFFLINE" on the clock instead. The hotspot only appears after two minutes
+without a connection, and it is open; anyone nearby can use it to change the
+saved network during that window.
+
 ## Updates
 
-The firmware checks `https://api.github.com/repos/<github_repo>/releases/latest`
-two minutes after boot and every 12 hours (`github_repo` substitution). It only
-reports a newer release; you still rebuild with your own secrets to install it.
+The **Firmware** update entity reads
+`https://github.com/<github_repo>/releases/latest/download/manifest.json` every
+six hours. Publishing a GitHub release whose tag matches the version in
+`pixizhi.yaml` (for example `v1.0.0`) runs `.github/workflows/release.yml`, which
+builds the firmware, attaches the OTA/factory images and manifest, and publishes
+the browser installer to GitHub Pages (enable Pages with source **GitHub Actions**
+once in the repository settings). Pre-releases are built and attached, but
+devices only follow the latest full release.
+
+A release is a public build: anything in `pixizhi.yaml` is visible to everyone.
+Never add credentials to it.

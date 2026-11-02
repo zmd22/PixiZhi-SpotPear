@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install PixiZhi SpotPear</title>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5; color: #1d1d1f; }
+    h1 { margin-bottom: .2rem; }
+    .ver { color: #666; margin-top: 0; }
+    ol li { margin-bottom: .6rem; }
+    code { background: #f2f2f2; padding: 0 .3rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>PixiZhi SpotPear</h1>
+  <p class="ver">Firmware __VERSION__ for the Spotpear Ball v2 (ESP32-S3)</p>
+
+  <ol>
+    <li>Use Chrome or Edge on a computer. Connect the ball with a USB-C data cable.</li>
+    <li>Hold the <b>BOOT</b> button while plugging in (the firmware uses USB for audio, so the
+        chip must start in download mode).</li>
+    <li>Click <b>Install</b> and pick the port that appears.</li>
+  </ol>
+
+  <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+
+  <h2>After installing</h2>
+  <ol>
+    <li>Unplug and reconnect normally. The ball shows <b>PIXIZHI SETUP</b> with a QR code.</li>
+    <li>Scan it (or join the <code>PixiZhi Setup</code> Wi-Fi) and choose your network.</li>
+    <li>In Home Assistant: <b>Settings → Devices &amp; services</b>, add the discovered
+        <b>PixiZhi SpotPear</b>, and allow it to perform Home Assistant actions.</li>
+    <li>Import the blueprints from the
+        <a href="https://github.com/zmd22/PixiZhi-SpotPear/tree/main/blueprints">repository</a>.</li>
+  </ol>
+  <p>Later versions arrive as a normal firmware update in Home Assistant.</p>
+</body>
+</html>

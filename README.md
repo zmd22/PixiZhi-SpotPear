@@ -1,6 +1,6 @@
 # PixiZhi SpotPear
 
-**0.9.9 · ESPHome firmware and Home Assistant blueprints for the Spotpear Ball v2**
+**1.0.0 · ESPHome firmware and Home Assistant blueprints for the Spotpear Ball v2**
 
 A bold pixel interface for a small round desktop display: clock, home controls,
 music, thermostats, status, notifications, timer, and four quick actions.
@@ -49,35 +49,29 @@ connection. A higher-power DAC or a different board may need additional hardware
 
 ## Install
 
-1. Copy `pixizhi.yaml`, `pixizhi_ui.h`, `components/`, `fonts/`, and `sounds/` together into your
-   ESPHome configuration directory. Keep their relative paths intact.
-2. Copy `secrets.yaml.example` to `secrets.yaml`. Fill in your Wi-Fi credentials,
-   a unique fallback-AP password (at least eight characters), and OTA password.
-   Generate an API encryption key with `openssl rand -base64 32` and put it in
-   `api_encryption_key`. The example deliberately contains no usable credentials.
-3. In `pixizhi.yaml`, set the device name/friendly name if desired, and set the
-   `timezone` substitution. The public default is **Etc/UTC**, not a location
-   selected for a particular household.
-4. Validate and install with your ESPHome development add-on, or run:
+**First install (once, over USB):**
 
-   ```sh
-   esphome config pixizhi.yaml
-   esphome run pixizhi.yaml
-   ```
+1. Open the installer page — `https://zmd22.github.io/PixiZhi-SpotPear/` — in Chrome
+   or Edge on a computer.
+2. Hold **BOOT** while plugging in the ball (the firmware uses USB for audio, so the
+   chip must start in download mode), click **Install**, pick the port.
+3. Reconnect normally. The ball shows **PIXIZHI SETUP** and a QR code. Scan it, or
+   join the `PixiZhi Setup` Wi-Fi, and choose your network.
+4. The ball then shows its IP and "add to Home Assistant". In Home Assistant open
+   **Settings → Devices & services**, add the discovered **PixiZhi SpotPear** and
+   enable **Allow the device to perform Home Assistant actions**. Home Assistant
+   creates a unique API encryption key for the device during this step.
+5. Import the three YAMLs in `blueprints/` and create an automation from each one
+   you need, with **ESPHome device name** `pixizhi`.
 
-   For an existing device, use its current OTA address/password when targeting
-   the first update. This template contains no hardcoded network address.
-5. Add the device to Home Assistant using the API encryption key, and enable
-   permission for the device to perform Home Assistant actions.
-6. Import the three YAMLs in `blueprints/` into Home Assistant. Create an
-   automation from each blueprint you need. In the screens blueprint, choose
-   your own entities; no household sensor, player, or weather entity is prefilled.
-7. Keep the blueprint's **ESPHome device name** equal to the firmware name
-   (`pixizhi` by default). For names containing dashes, HA service names use
-   underscores; see [configuration notes](docs/CONFIGURATION.md).
+**Updates:** new releases appear as a **Firmware** update in Home Assistant.
+Click Install; the ball downloads the image from GitHub over verified HTTPS and
+checks its MD5 before flashing. Wi-Fi, the API key and all settings are kept.
 
-No prebuilt firmware is supplied: compile with your own secrets. Do not commit
-`secrets.yaml`, local build output, or configured device exports.
+The public firmware contains no credentials and no network-push OTA. To build
+your own variant instead, use ESPHome's **Take control** on the discovered device
+(or copy `pixizhi.yaml`, `pixizhi_ui.h`, `components/`, `fonts/`, `sounds/`) and add
+your own `ota:`/`wifi:` settings; see [configuration notes](docs/CONFIGURATION.md).
 
 ## Use
 
@@ -101,18 +95,10 @@ and [validation notes](docs/VALIDATION.md).
 
 ## Development status
 
-The `dev` branch is experimental and is the current development branch.
-
-
-This is an early **0.9.9** source release. The 0.9.9 additions compile with
-ESPHome 2026.11.0-dev and pass host tests of the shared helpers, but have not yet
-been exercised on hardware (deep-standby touch wake in particular).
-
-The 0.9.8 base is described below. USB software volume was tested
-successfully on compatible hardware. The pixel interface passed full development
-firmware compilation and host checks of rendering, scheduling, and brightness.
-The complete 0.9.8 interface/authentication combination still needs on-device
-verification of touch behaviour, PWM brightness, and sustained playback.
+1.0.0 introduces the public, credential-free firmware with GitHub release updates.
+It compiles with ESPHome 2026.11.0-dev and passes host tests of the shared helpers.
+Touch wake from deep standby, the setup flow and the update path should be
+confirmed on hardware before the release is published.
 
 ## Credits and licensing
 

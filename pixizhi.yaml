@@ -1,5 +1,5 @@
 # =============================================================================
-#  PixiZhi SpotPear 0.9.9 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
+#  PixiZhi SpotPear 1.0.0 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
 #  Standby clock + up to 6 light / media player / thermostat screens picked in
 #  Home Assistant, pizza button screen, notification center, kitchen timer,
 #  pixel clock, Sendspin speaker, siren, LED notifications,
@@ -8,18 +8,17 @@
 # =============================================================================
 
 substitutions:
-  # GitHub repository checked for new releases (owner/name).
+  # GitHub repository that publishes firmware releases (owner/name).
   github_repo: zmd22/PixiZhi-SpotPear
   name: pixizhi
   friendly_name: PixiZhi SpotPear
-  timezone: Etc/UTC
 
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
   project:
     name: pixizhi.spotpear
-    version: "0.9.9"
+    version: "1.0.0"
   min_version: 2026.11.0-dev
   name_add_mac_suffix: false
   includes:
@@ -36,6 +35,11 @@ esphome:
       - script.execute: apply_standby_style
       - script.execute: show_current
       - script.execute: apply_audio_output
+
+# Lets the ESPHome dashboard "Take control" of a discovered device and build it locally.
+dashboard_import:
+  package_import_url: github://${github_repo}/pixizhi.yaml@main
+  import_full_config: true
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -57,17 +61,28 @@ logger:
   hardware_uart: UART0
   baud_rate: 0
 
+# Public firmware contains no credentials. Without saved Wi-Fi the device opens
+# the "PixiZhi Setup" hotspot and shows a QR code; the captive portal stores the
+# network on the device, where it survives every update.
 wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
   ap:
-    password: !secret fallback_ap_password
+    ssid: PixiZhi Setup
+    ap_timeout: 2min
 
 captive_portal:
 
+# No network-push OTA: a password in public firmware would not be secret.
+# Updates are pulled from GitHub releases and checked against the manifest MD5
+# over verified HTTPS. USB flashing always remains possible.
 ota:
-  - platform: esphome
-    password: !secret ota_password
+  - platform: http_request
+
+update:
+  - platform: http_request
+    id: firmware_update
+    name: Firmware
+    source: https://github.com/${github_repo}/releases/latest/download/manifest.json
+    update_interval: 6h
 
 # Bluetooth proxy and BLE scanning are removed to free resources for USB audio.
 # The USB-C connection is now a host data port for an external USB DAC/speaker.
@@ -89,12 +104,15 @@ http_request:
   useragent: PixiZhi-SpotPear
   timeout: 10s
 
+# Encryption without a compiled key: Home Assistant generates and stores a key
+# for this device when it is added, so every installation has its own key.
 api:
-  encryption:
-    key: !secret api_encryption_key
+  encryption: {}
   on_client_disconnected:
     - script.execute: link_changed
   on_client_connected:
+    - lambda: id(ha_adopted) = true;
+    - script.execute: setup_card_update
     - script.execute: link_changed
     - delay: 3s
     - homeassistant.event:
@@ -400,7 +418,8 @@ api:
 time:
   - platform: homeassistant
     id: ha_time
-    timezone: ${timezone}
+    # Home Assistant 2026.3+ sends its own timezone at runtime; UTC is a fallback.
+    timezone: UTC
     on_time_sync:
       - script.execute: timer_restore
       - script.execute: update_clock
@@ -783,6 +802,15 @@ globals:
   - id: dimmed_since
     type: uint32_t
     initial_value: "0"
+  # Set once Home Assistant has connected; hides the "add to HA" card for good.
+  - id: ha_adopted
+    type: bool
+    restore_value: true
+    initial_value: "false"
+  # 0 hidden, 1 Wi-Fi setup, 2 add to Home Assistant, 3 dismissed for this boot
+  - id: setup_state
+    type: int
+    initial_value: "0"
   - id: ha_online
     type: std::function<bool()>
     initial_value: |-
@@ -1038,12 +1066,6 @@ text_sensor:
     device_class: timestamp
     update_interval: never
   - platform: template
-    id: latest_version
-    name: Latest Release
-    icon: mdi:github
-    entity_category: diagnostic
-    update_interval: never
-  - platform: template
     id: timer_state_sensor
     name: Timer State
     icon: mdi:timer-outline
@@ -1086,6 +1108,17 @@ switch:
     entity_category: config
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    id: battery_ring
+    name: Battery Ring
+    icon: mdi:battery-heart-variant
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - script.execute: draw_dot_clock
+    on_turn_off:
+      - script.execute: draw_dot_clock
   - platform: template
     id: night_mode
     name: Night Mode
@@ -1385,12 +1418,7 @@ button:
   - platform: restart
     name: Restart
     entity_category: config
-  - platform: template
-    name: Check for Update
-    icon: mdi:update
-    entity_category: diagnostic
-    on_press:
-      - script.execute: check_update
+
 
 # --- BATTERY + SWIPE SENSORS --------------------------------------------------
 sensor:
@@ -1462,11 +1490,8 @@ binary_sensor:
     name: Charging (estimated)
     device_class: battery_charging
     entity_category: diagnostic
-  - platform: template
-    id: update_available
-    name: Firmware Update Available
-    device_class: update
-    entity_category: diagnostic
+    on_state:
+      - script.execute: draw_dot_clock
   - platform: template
     id: swipe_left
     name: Swipe Left
@@ -1496,7 +1521,7 @@ touchscreen:
     i2c_id: bus_b
     on_touch:
       - lambda: |-
-          if (id(sendspin_pairing_visible)) return;
+          if (id(sendspin_pairing_visible) || id(setup_state)==1 || id(setup_state)==2) return;
           id(gs_touch_active)=true;
           id(ui_touch_view)=id(ui_view);id(ui_touch_slot)=id(cur_slot);id(ui_touch_overlay)=id(overlay);
           id(gs_clock_origin)=id(overlay)==pixizhi::OVERLAY_NONE && id(ui_view)==pixizhi::VIEW_STANDBY && id(cur_slot)<0;
@@ -1521,7 +1546,7 @@ touchscreen:
           if(id(bl_dimmed)){id(bl_dimmed)=false;id(apply_backlight).execute();}
     on_update:
       - lambda: |-
-          if (id(sendspin_pairing_visible)) { id(gs_touch_active)=false; return; }
+          if (id(sendspin_pairing_visible) || id(setup_state)==1 || id(setup_state)==2) { id(gs_touch_active)=false; return; }
           if(!id(gs_touch_active))return;
           for(auto &t:touches)if(t.id==id(gs_touch_id)&&t.state>=1&&t.state<=2){
             id(gs_last_x)=t.x;id(gs_last_y)=t.y;
@@ -1542,7 +1567,7 @@ touchscreen:
           }
     on_release:
       - lambda: |-
-          if (id(sendspin_pairing_visible)) { id(gs_touch_active)=false; return; }
+          if (id(sendspin_pairing_visible) || id(setup_state)==1 || id(setup_state)==2) { id(gs_touch_active)=false; return; }
           if(!id(gs_touch_active))return;
           id(gs_touch_active)=false;
           if(id(ui_wake_only))return;
@@ -2647,6 +2672,19 @@ script:
             con = lv_color_hex(ON[ci]);
             coff = lv_color_hex(OFF[ci]);
           }
+          // ---- battery ring: outer edge, clockwise from 12 o'clock, hidden while charging ----
+          if (id(battery_ring).state && !id(battery_charging).state && !std::isnan(id(battery_percentage).state)) {
+            const float pct = fmaxf(0.0f, fminf(100.0f, id(battery_percentage).state));
+            const uint32_t ring_on = pct > 50 ? 0x2EFF5C : pct > 20 ? 0xFFB000 : 0xFF2A2A;
+            const int DOTS = 60, lit = (int) roundf(pct * DOTS / 100.0f);
+            lv_color_t save_on = con, save_off = coff;
+            con = lv_color_hex(ring_on); coff = lv_color_hex(0x161616);
+            for (int k = 0; k < DOTS; k++) {
+              float a = (-90.0f + k * 360.0f / DOTS) * 0.0174532925f;
+              dot(120 + cosf(a) * 115.0f, 120 + sinf(a) * 115.0f, 1.6f, k < lit);
+            }
+            con = save_on; coff = save_off;
+          }
           // ---- time: widest digits that fit (25 columns) ----
           std::string hm = now.is_valid() ? now.strftime("%H:%M") : std::string("--:--");
           {
@@ -3157,6 +3195,47 @@ script:
               id(timer_paused_left) > 0 ? "paused" : "idle");
 
   # Redraw both screens immediately when the API link drops or returns.
+  # Onboarding card: Wi-Fi setup hotspot first, then "add to Home Assistant".
+  - id: setup_card_update
+    then:
+      - lambda: |-
+          if (!id(ui_ready)) return;
+          auto *w = wifi::global_wifi_component;
+          int want = 0;
+          // Setup only before Wi-Fi is configured; a later router outage shows "WIFI OFFLINE" instead.
+          if (!w->is_connected() && w->is_ap_active() && (!w->has_sta() || !id(ha_adopted))) want = 1;
+          else if (w->is_connected() && !id(ha_adopted) && !api::global_api_server->is_connected())
+            want = id(setup_state) == 3 ? 3 : 2;
+          if (id(setup_state) == 3 && want != 1) want = id(ha_adopted) ? 0 : 3;
+          static std::string last_ip;
+          std::string ip;
+          if (want == 2) for (auto &a : w->get_ip_addresses()) if (a.is_ip4()) { char b[48]; ip = a.str_to(b); break; }
+          if (want == id(setup_state) && ip == last_ip) return;
+          id(setup_state) = want;
+          last_ip = ip;
+          if (want == 1) {
+            lv_label_set_text(id(setup_heading), "PIXIZHI SETUP");
+            lv_obj_clear_flag(id(setup_qr), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(setup_big), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(setup_hide), LV_OBJ_FLAG_HIDDEN);
+            lv_label_set_text(id(setup_hint), "Scan to join PixiZhi Setup, then choose your Wi-Fi");
+          } else if (want == 2) {
+            lv_label_set_text(id(setup_heading), "WI-FI OK");
+            lv_obj_add_flag(id(setup_qr), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(setup_big), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(setup_hide), LV_OBJ_FLAG_HIDDEN);
+            lv_label_set_text(id(setup_big), ip.empty() ? "CONNECTED" : ip.c_str());
+            lv_label_set_text(id(setup_hint), "Home Assistant: Settings > Devices > Discovered > PixiZhi > Add");
+          }
+          if (want == 1 || want == 2) {
+            lv_obj_clear_flag(id(setup_card), LV_OBJ_FLAG_HIDDEN);
+            id(gs_touch_active) = false;
+            id(bl_dimmed) = false;
+            id(apply_backlight).execute();
+          } else {
+            lv_obj_add_flag(id(setup_card), LV_OBJ_FLAG_HIDDEN);
+          }
+
   - id: link_changed
     then:
       - script.execute: draw_dot_clock
@@ -3262,43 +3341,6 @@ script:
       - delay: 200ms
       - deep_sleep.enter: deep_standby
 
-  # Ask GitHub for the latest release and compare it with this build's version.
-  - id: check_update
-    then:
-      - if:
-          condition:
-            wifi.connected:
-          then:
-            - http_request.get:
-                url: https://api.github.com/repos/${github_repo}/releases/latest
-                request_headers:
-                  Accept: application/vnd.github+json
-                capture_response: true
-                max_response_buffer_size: 8192
-                on_response:
-                  then:
-                    - lambda: |-
-                        if (response->status_code != 200) {
-                          // 404 means the repository has no published release yet.
-                          ESP_LOGI("update", "Release check returned HTTP %d", response->status_code);
-                          return;
-                        }
-                        std::string tag;
-                        json::parse_json(body, [&](JsonObject root) -> bool {
-                          if (root["tag_name"].is<const char *>()) tag = root["tag_name"].as<std::string>();
-                          return true;
-                        });
-                        if (tag.empty()) return;
-                        id(latest_version).publish_state(tag);
-                        bool newer = pixizhi::compare_versions(tag, ESPHOME_PROJECT_VERSION) > 0;
-                        id(update_available).publish_state(newer);
-                        ESP_LOGI("update", "Latest release %s, running %s", tag.c_str(), ESPHOME_PROJECT_VERSION);
-                on_error:
-                  then:
-                    - logger.log:
-                        level: WARN
-                        format: "Release check failed"
-
   # Safety stop: the siren switches itself off after "Siren Max Duration"
   - id: siren_timeout
     mode: restart
@@ -3308,14 +3350,12 @@ script:
 
 
 interval:
-  # Release check: once two minutes after boot, then twice a day.
-  - interval: 12h
-    startup_delay: 2min
-    then:
-      - script.execute: check_update
   - interval: 250ms
     then:
       - script.execute: audio_display_policy
+  - interval: 1s
+    then:
+      - script.execute: setup_card_update
   - interval: 250ms
     then:
       - lambda: |-
@@ -3426,7 +3466,8 @@ interval:
               if (id(dimmed_since) == 0) id(dimmed_since) = millis();
               const float minutes = id(deep_standby_after).state;
               if (!(minutes > 0) || id(battery_charging).state || id(audio_busy)() || id(timer_running) ||
-                  id(timer_done) || id(siren).state || id(sendspin_pairing_visible) || id(gs_touch_active)) return false;
+                  id(timer_done) || id(siren).state || id(sendspin_pairing_visible) || id(gs_touch_active) ||
+                  !id(ha_adopted)) return false;
               for (bool u : id(nq_urgent)) if (u) return false;
               return (uint32_t)(millis() - id(dimmed_since)) >= (uint32_t)(minutes * 60000.0f);
           then:
@@ -3470,7 +3511,7 @@ lvgl:
     then:
       - if:
           condition:
-            lambda: return !id(sendspin_pairing_visible) && !id(gs_touch_active) && !id(bl_dimmed) && !(id(overlay) == pixizhi::OVERLAY_NOTIFICATIONS && !id(nq_urgent).empty() && id(nq_urgent)[0]) && !id(timer_done);
+            lambda: return !id(sendspin_pairing_visible) && id(setup_state)!=1 && id(setup_state)!=2 && !id(gs_touch_active) && !id(bl_dimmed) && !(id(overlay) == pixizhi::OVERLAY_NOTIFICATIONS && !id(nq_urgent).empty() && id(nq_urgent)[0]) && !id(timer_done);
           then:
             - lambda: |-
                 id(cur_slot) = -1;
@@ -3501,6 +3542,70 @@ lvgl:
   # Modal above every page; underlying navigation is suppressed while visible.
   top_layer:
     widgets:
+      - obj:
+          id: setup_card
+          hidden: true
+          align: CENTER
+          width: 240
+          height: 240
+          bg_color: 0x000000
+          bg_opa: COVER
+          border_width: 0
+          pad_all: 0
+          radius: 0
+          scrollable: false
+          clickable: true
+          widgets:
+            - label:
+                id: setup_heading
+                align: CENTER
+                y: -84
+                text: PIXIZHI SETUP
+                text_font: pixel_medium
+                text_color: 0xFFB000
+            - qrcode:
+                id: setup_qr
+                align: CENTER
+                y: -6
+                size: 108
+                light_color: 0xFFFFFF
+                dark_color: 0x000000
+                text: "WIFI:S:PixiZhi Setup;T:nopass;;"
+            - label:
+                id: setup_big
+                align: CENTER
+                y: -10
+                hidden: true
+                text: ""
+                text_font: pixel_medium
+                text_color: 0xFFFFFF
+            - label:
+                id: setup_hint
+                align: CENTER
+                y: 62
+                width: 190
+                long_mode: WRAP
+                text_align: CENTER
+                text: "Scan to join PixiZhi Setup, then choose your Wi-Fi"
+                text_font: pixel_small
+                text_color: 0xC0C0C0
+            - button:
+                id: setup_hide
+                align: CENTER
+                y: 92
+                width: 80
+                height: 30
+                radius: 15
+                bg_color: 0x303030
+                hidden: true
+                widgets:
+                  - label:
+                      align: CENTER
+                      text: LATER
+                      text_font: pixel_small
+                on_click:
+                  - lambda: id(setup_state) = 3;
+                  - script.execute: setup_card_update
       - obj:
           id: pairing_card
           hidden: true

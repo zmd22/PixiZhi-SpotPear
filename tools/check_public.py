@@ -19,7 +19,7 @@ for path in root.rglob('*'):
     text = path.read_text()
     if re.search(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', text):
         errors.append(f'{rel}: literal IPv4 address')
-    if re.search(r'(?im)^\s*(?:password|ssid):\s*(?!\!secret\b)\S', text):
+    if re.search(r'(?im)^\s*(?:password|ssid):\s*(?!\!secret\b)(?!PixiZhi Setup\s*$)\S', text):
         errors.append(f'{rel}: inline Wi-Fi/password setting')
     if re.search(r'(?im)^\s*use_address:', text):
         errors.append(f'{rel}: configured OTA address')

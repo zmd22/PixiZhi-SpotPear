@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.0
+
+- Public, credential-free firmware: Wi-Fi via the `PixiZhi Setup` hotspot with an
+  on-screen QR code, API encryption key provisioned by Home Assistant, timezone
+  received from Home Assistant. `secrets.yaml` is no longer needed.
+- On-screen onboarding: setup QR, then IP and "add to Home Assistant" hint.
+- Firmware updates from GitHub releases through the Home Assistant update entity
+  (HTTPS with certificate verification, MD5-checked image). Network-push OTA is
+  removed from the public build.
+- Release workflow builds and attaches images and publishes a browser installer.
+- Battery ring around the clock edge (`Battery Ring` switch), hidden while charging.
+- `dashboard_import` for ESPHome "Take control".
+- Release check entities from 0.9.9 replaced by the native update entity.
+
 ## 0.9.9
 
 - Kitchen timer counts from an absolute end time (no drift), survives reboots
