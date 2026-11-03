@@ -1745,11 +1745,13 @@ sensor:
           for (int i = 4; i > 0; i--) history[i] = history[i - 1];
           history[0] = x;
           if (filled < 5) filled++;
+          // Tightened: near-full voltage counts as external power at once, and the
+          // trend is judged over two minutes instead of five.
           bool charging = id(battery_charging).state;
-          if (x >= 4.17f) charging = true;
-          else if (filled == 5 && x - history[4] >= 0.04f) charging = true;
-          else if (filled == 5 && history[4] - x >= 0.02f) charging = false;
-          else if (x < 4.05f && filled == 5 && x - history[4] < 0.01f) charging = false;
+          if (x >= 4.12f) charging = true;
+          else if (filled >= 3 && x - history[2] >= 0.03f) charging = true;
+          else if (filled >= 3 && history[2] - x >= 0.02f) charging = false;
+          else if (x < 4.05f && filled >= 3 && x - history[2] < 0.01f) charging = false;
           if (charging != id(battery_charging).state) id(battery_charging).publish_state(charging);
       - script.execute: draw_dot_clock
 

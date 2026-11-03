@@ -76,8 +76,8 @@ normal use, and use HA controls during a comparison test.
   `Charging (estimated)` is on, during playback, a running/finished timer, an
   urgent alert, the siren, or Sendspin pairing.
 - **Charging (estimated)**: the board exposes no charger signal, so charging is
-  inferred from the idle battery voltage (≥ 4.17 V, or rising over five minutes).
-  Expect a delay of a few minutes after plugging in or out.
+  inferred from the idle battery voltage (≥ 4.12 V, or rising over two minutes).
+  Expect a delay of a minute or two after plugging in or out.
 - Battery readings are frozen while audio plays, because speaker load lowers the
   measured voltage.
 - With **Standby Brightness** at 0 %, the standby screen is not redrawn until woken.
