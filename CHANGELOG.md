@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.2
+
+- Fix the clock showing UTC: a configured fallback timezone disabled the
+  timezone Home Assistant sends to the device. The ball now follows Home
+  Assistant's timezone, including daylight saving (Home Assistant 2026.3+).
+- Plane screen: several planes no longer get cut off by the screen timeout.
+- "NO HA DATA" when Home Assistant is connected but the screens blueprint sends
+  nothing (previously shown as "HA OFFLINE").
+- Offline note on inner pages moved clear of the round edge; quick settings
+  show --:-- until the clock is synced.
+
 ## 1.1.1
 
 - Fix firmware updates: the update check failed on every install because

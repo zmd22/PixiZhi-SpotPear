@@ -1,5 +1,5 @@
 # =============================================================================
-#  PixiZhi SpotPear 1.1.1 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
+#  PixiZhi SpotPear 1.1.2 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
 #  Standby clock + up to 6 light / media player / thermostat screens picked in
 #  Home Assistant, pizza button screen, notification center, kitchen timer,
 #  pixel clock, Sendspin speaker, siren, LED notifications,
@@ -21,7 +21,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:
     name: pixizhi.spotpear
-    version: "1.1.1"
+    version: "1.1.2"
   min_version: 2026.11.0-dev
   name_add_mac_suffix: false
   includes:
@@ -503,8 +503,8 @@ api:
 time:
   - platform: homeassistant
     id: ha_time
-    # Home Assistant 2026.3+ sends its own timezone at runtime; UTC is a fallback.
-    timezone: UTC
+    # No timezone here on purpose: a configured timezone disables the one Home
+    # Assistant (2026.3+) sends at runtime. The build machine's zone is only a fallback.
     on_time_sync:
       - script.execute: timer_restore
       - script.execute: update_clock
@@ -921,6 +921,7 @@ globals:
         s.anim_ms = now;
         s.ha_online = id(ha_online)();
         s.wifi_online = wifi::global_wifi_component->is_connected();
+        s.api_online = api::global_api_server->is_connected();
         if (!id(ui_message).empty() && (int32_t)(id(ui_message_until) - now) > 0) s.message = id(ui_message);
         auto t = id(ha_time).now();
         s.time_valid = t.is_valid(); s.hour = t.hour; s.minute = t.minute;
@@ -3300,6 +3301,8 @@ interval:
             id(plane_start_ms) = millis();
             id(ui_scroll_ms) = millis();
             if (id(plane_idx) >= (int) id(plane_queue).size()) { id(plane_end).execute(); return; }
+            // Each plane counts as activity, so the screen timeout cannot cut the cycle short.
+            id(wake_screen).execute();
           }
           id(ui_render).execute();
   - interval: 250ms

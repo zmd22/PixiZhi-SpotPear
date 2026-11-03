@@ -370,7 +370,7 @@ struct UiState {
   int screen = S_CLOCK;
   Rgb accent = rgb(THEME_COLORS[THEME_DEFAULT].rgb);
   uint32_t scroll_ms = 0, anim_ms = 0;  // ms since the screen opened; free-running animation clock
-  bool ha_online = true, wifi_online = true;
+  bool ha_online = true, wifi_online = true, api_online = true;
   std::string message;
 
   // clock
@@ -429,6 +429,11 @@ struct UiState {
   float progress = -1;  // 0..1 track progress, -1 unknown
 };
 
+// Why HA counts as offline: no Wi-Fi, no API link, or linked but the blueprint sends nothing.
+inline const char *offline_text(const UiState &s) {
+  return !s.wifi_online ? "WIFI OFFLINE" : !s.api_online ? "HA OFFLINE" : "NO HA DATA";
+}
+
 inline std::string fmt(float v, int decimals) {
   char b[24];
   snprintf(b, sizeof(b), decimals >= 2 ? "%.2f" : decimals == 1 ? "%.1f" : "%.0f", v);
@@ -446,7 +451,7 @@ inline void draw_clock(Canvas &cv, const UiState &s) {
     edge_ring(cv, s.battery / 100.0f, s.battery <= 20 ? ALARM : s.battery <= 50 ? rgb(0xFFB000) : OK_GREEN);
   // top row: connection problem, status, or weather
   if (!s.ha_online) {
-    text(cv, s.wifi_online ? "HA OFFLINE" : "WIFI OFFLINE", 120, 46, 3, GREY, 170);
+    text(cv, offline_text(s), 120, 46, 3, GREY, 170);
   } else if (s.status_row >= 0 && s.status_row < 6 && s.status[s.status_row].active) {
     const auto &st = s.status[s.status_row];
     icon(cv, st.icon, 52, 44, 3, a);
@@ -775,7 +780,8 @@ inline void draw_quick(Canvas &cv, const UiState &s) {
   icon(cv, "wifi", 140, 28, 2, s.wifi_online ? WHITE : DIM);
   led(cv, 166, 35, 7, s.ha_online ? OK_GREEN : ALARM);
   char hm[8];
-  snprintf(hm, sizeof(hm), "%02d:%02d", s.hour, s.minute);
+  if (s.time_valid) snprintf(hm, sizeof(hm), "%02d:%02d", s.hour, s.minute);
+  else snprintf(hm, sizeof(hm), "--:--");
   text(cv, hm, 120, 50, 2, GREY);
   struct Tile { const char *ic; std::string val; bool on; };
   const Tile tiles[] = {{"sun", std::to_string(s.q_brightness) + "%", true},
@@ -855,7 +861,7 @@ inline void draw_frame(Canvas &cv, UiState &s) {
     case S_PLANE: draw_plane(cv, s); break;
   }
   if (s.screen != S_CLOCK && s.screen != S_QUICK && s.screen != S_PLANE && !s.ha_online)
-    text(cv, s.wifi_online ? "HA OFFLINE" : "WIFI OFFLINE", 120, 8, 1.6f, GREY, 130);
+    text(cv, offline_text(s), 120, 15, 1.6f, GREY, 110);
   if (!s.message.empty()) {
     fill_rect(cv, 30, 194, 180, 16, BLACK);
     text(cv, s.message, 120, 196, 1.6f, WHITE, 176);

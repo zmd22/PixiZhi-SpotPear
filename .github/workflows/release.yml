@@ -46,6 +46,8 @@ jobs:
           fi
 
       - name: Compile
+        env:
+          TZ: UTC  # build-time fallback only; the device uses Home Assistant's timezone
         run: esphome compile pixizhi.yaml
 
       - name: Collect images and write manifest
