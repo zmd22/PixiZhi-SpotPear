@@ -107,8 +107,8 @@ saved network during that window.
 ## Updates
 
 The **Firmware** update entity reads
-`https://github.com/<github_repo>/releases/latest/download/manifest.json` every
-six hours. Publishing a GitHub release whose tag matches the version in
+`https://zmd22.github.io/PixiZhi-SpotPear/manifest.json` (`update_manifest_url`)
+after boot and every six hours. Publishing a GitHub release whose tag matches the version in
 `pixizhi.yaml` (for example `v1.0.0`) runs `.github/workflows/release.yml`, which
 builds the firmware, attaches the OTA/factory images and manifest, and publishes
 the browser installer to GitHub Pages (enable Pages with source **GitHub Actions**

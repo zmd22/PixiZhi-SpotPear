@@ -79,13 +79,17 @@ jobs:
                      "builds": [{"chipFamily": "ESP32-S3", "ota": ota,
                                  "parts": [{"path": f"{base}/pixizhi-{v}.factory.bin", "offset": 0}]}]},
                     open("out/manifest.json", "w"), indent=2)
-          # Browser installer manifest: the image is served from Pages (same origin).
+          # Pages manifest, read by both the browser installer ("parts") and the
+          # device's update entity ("ota"). Paths are relative to the manifest,
+          # so devices fetch short Pages URLs with no redirects.
+          site_ota = dict(ota, path="firmware.ota.bin")
           json.dump({"name": "PixiZhi SpotPear", "version": v, "new_install_prompt_erase": True,
-                     "builds": [{"chipFamily": "ESP32-S3",
+                     "builds": [{"chipFamily": "ESP32-S3", "ota": site_ota,
                                  "parts": [{"path": "firmware.factory.bin", "offset": 0}]}]},
                     open("site/manifest.json", "w"), indent=2)
           PY
           cp "out/pixizhi-$VERSION.factory.bin" site/firmware.factory.bin
+          cp "out/pixizhi-$VERSION.ota.bin" site/firmware.ota.bin
           sed "s/__VERSION__/$VERSION/g" install/index.html > site/index.html
           ls -l out site
 

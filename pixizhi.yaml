@@ -1,5 +1,5 @@
 # =============================================================================
-#  PixiZhi SpotPear 1.1.0 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
+#  PixiZhi SpotPear 1.1.1 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
 #  Standby clock + up to 6 light / media player / thermostat screens picked in
 #  Home Assistant, pizza button screen, notification center, kitchen timer,
 #  pixel clock, Sendspin speaker, siren, LED notifications,
@@ -10,6 +10,9 @@
 substitutions:
   # GitHub repository that publishes firmware releases (owner/name).
   github_repo: zmd22/PixiZhi-SpotPear
+  # Update manifest on the project's GitHub Pages site: short, stable URLs
+  # without the long signed redirects of release downloads.
+  update_manifest_url: https://zmd22.github.io/PixiZhi-SpotPear/manifest.json
   name: pixizhi
   friendly_name: PixiZhi SpotPear
 
@@ -18,7 +21,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:
     name: pixizhi.spotpear
-    version: "1.1.0"
+    version: "1.1.1"
   min_version: 2026.11.0-dev
   name_add_mac_suffix: false
   includes:
@@ -124,7 +127,7 @@ update:
   - platform: http_request
     id: firmware_update
     name: Firmware
-    source: https://github.com/${github_repo}/releases/latest/download/manifest.json
+    source: ${update_manifest_url}
     update_interval: 6h
 
 # Bluetooth proxy and BLE scanning are removed to free resources for USB audio.
@@ -144,6 +147,9 @@ usb_audio:
 
 http_request:
   verify_ssl: true
+  # The 512-byte defaults are too small for long redirect URLs and headers.
+  buffer_size_rx: 2048
+  buffer_size_tx: 2048
   useragent: PixiZhi-SpotPear
   timeout: 10s
 

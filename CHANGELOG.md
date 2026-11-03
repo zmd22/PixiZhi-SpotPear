@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.1
+
+- Fix firmware updates: the update check failed on every install because
+  GitHub's release downloads redirect to URLs longer than the default 512-byte
+  HTTP buffers. Buffers are now 2 kB, and the manifest and OTA image are served
+  from the GitHub Pages site (short URLs, no redirects).
+- Devices on 1.0.0 or 1.1.0 cannot update over the air; flash 1.1.1 once over
+  USB from the browser installer. Later versions install from Home Assistant.
+
 ## 1.1.0
 
 - New "Soft LED" look on every screen: glowing round LEDs, one 5x7 font (no tiny
