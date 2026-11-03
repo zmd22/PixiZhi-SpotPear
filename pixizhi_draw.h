@@ -294,16 +294,16 @@ static const Icon ICONS[] = {
     {"bat_h", 9, 5, {"XXXXXXXX.", "X......XX", "X......XX", "X......XX", "XXXXXXXX."}},
     {"chev_up", 7, 4, {"...X...", "..XXX..", ".XX.XX.", "XX...XX"}},
     {"chev_down", 7, 4, {"XX...XX", ".XX.XX.", "..XXX..", "...X..."}},
-    // 9x7 weather
-    {"w_sun", 9, 7, {"....X....", ".X.....X.", "...XXX...", "X.XXXXX.X", "...XXX...", ".X.....X.", "....X...."}},
-    {"w_moon", 9, 7, {"...XXX...", "..XXX....", ".XXX.....", ".XXX.....", ".XXX.....", "..XXX....", "...XXX..."}},
-    {"w_part", 9, 7, {"X..X.....", ".XX.XX...", "..XXXXXX.", ".XXXXXXXX", "XXXXXXXXX", ".XXXXXXX.", "........."}},
-    {"w_cloud", 9, 7, {"...XX....", "..XXXXX..", ".XXXXXXX.", "XXXXXXXXX", "XXXXXXXXX", ".XXXXXXX.", "........."}},
-    {"w_rain", 9, 7, {"..XXXXX..", ".XXXXXXX.", "XXXXXXXXX", ".XXXXXXX.", ".........", "X..X..X..", ".X..X..X."}},
-    {"w_snow", 9, 7, {"..XXXXX..", ".XXXXXXX.", "XXXXXXXXX", ".XXXXXXX.", ".........", "X.X.X.X.X", ".X.X.X.X."}},
-    {"w_bolt", 9, 7, {"..XXXXX..", ".XXXXXXX.", "XXXXXXXXX", "...XX....", "..XX.....", "...XX....", "..X......"}},
-    {"w_fog", 9, 7, {".........", "XXXXXXXXX", ".........", ".XXXXXXX.", ".........", "XXXXXXXXX", "........."}},
-    {"w_wind", 9, 7, {"...XX....", "XXXX.X...", ".....X...", "XXXXXX...", ".....X...", "XXXX.X...", "...XX...."}},
+    // 11x9 weather
+    {"w_sun", 11, 9, {".....X.....", "..X.....X..", "....XXX....", "...XXXXX...", "X.XXXXXXX.X", "...XXXXX...", "....XXX....", "..X.....X..", ".....X....."}},
+    {"w_moon", 11, 9, {"...XXXX....", ".XXXXX.....", ".XXXX......", "XXXX.......", "XXXX.......", "XXXXX.....X", ".XXXXXX.XX.", "..XXXXXXXX.", "....XXXX..."}},
+    {"w_part", 11, 9, {"..X........", "X...XX.....", "..XXXX.....", ".XXXX.XXX..", "XXXX.XXXXX.", "..X.XXXXXXX", ".X.XXXXXXXX", "...XXXXXXXX", "....XXXXXX."}},
+    {"w_cloud", 11, 9, {"...........", "....XXX....", "..XXXXXXX..", ".XXXXXXXXX.", "XXXXXXXXXXX", "XXXXXXXXXXX", ".XXXXXXXXX.", "...........", "..........."}},
+    {"w_rain", 11, 9, {"....XXX....", "..XXXXXXX..", ".XXXXXXXXX.", "XXXXXXXXXXX", ".XXXXXXXXX.", "...........", "..X...X...X", ".X...X...X.", "X...X...X.."}},
+    {"w_snow", 11, 9, {"....XXX....", "..XXXXXXX..", ".XXXXXXXXX.", "XXXXXXXXXXX", ".XXXXXXXXX.", "...........", ".X...X...X.", "...........", "...X...X..."}},
+    {"w_bolt", 11, 9, {"....XXX....", "..XXXXXXX..", ".XXXXXXXXX.", "XXXXXXXXXXX", ".XXXXXXXXX.", "....XXX....", "...XXXXXX..", "......XX...", ".....X....."}},
+    {"w_fog", 11, 9, {"...........", "XXXXXXXXXXX", "...........", ".XXXXXXXXX.", "...........", "XXXXXXXXXXX", "...........", "..XXXXXXX..", "..........."}},
+    {"w_wind", 11, 9, {"......XX...", "XXXXXX..X..", "........X..", "XXXXXXXXX..", "...........", "XXXXXXX....", ".......X...", "......X....", "..........."}},
 };
 
 inline const Icon *find_icon(const std::string &raw) {
@@ -463,10 +463,11 @@ inline void draw_clock(Canvas &cv, const UiState &s) {
                     : (c == "snowy" || c == "snowy-rainy" || c == "hail") ? "w_snow" : c == "fog" ? "w_fog"
                     : (c == "windy" || c == "windy-variant") ? "w_wind" : "w_cloud";
     std::string t = fmt(s.weather_temp, 0) + "^";
-    float tw = text_width(t, 3), total = 27 + 8 + tw;
+    const float ip = 3.2f, iw = 11 * ip;  // 11x9 icon, centred on the 3x text
+    float tw = text_width(t, 3), total = iw + 8 + tw;
     float x0 = 120 - total / 2;
-    icon(cv, k, x0 + 13.5f + (s.weather_frame % 2), 46 + (s.weather_frame >= 2 ? 1 : 0), 3, a);
-    text(cv, t, x0 + 35 + tw / 2, 46, 3, a);
+    icon(cv, k, x0 + iw / 2 + (s.weather_frame % 2), 39 + (s.weather_frame >= 2 ? 1 : 0), ip, a);
+    text(cv, t, x0 + iw + 8 + tw / 2, 46, 3, a);
   }
   // time
   char hm[8];

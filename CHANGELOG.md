@@ -6,6 +6,8 @@
   timezone Home Assistant sends to the device. The ball now follows Home
   Assistant's timezone, including daylight saving (Home Assistant 2026.3+).
 - Plane screen: several planes no longer get cut off by the screen timeout.
+- Redrawn weather icons on the clock (11x9, larger): clearer sun, crescent moon,
+  partly cloudy, slanted rain vs dotted snow, lightning, fog and wind.
 - Faster charging detection (near-full voltage or a two-minute rise), so the
   battery ring hides sooner on the charger.
 - "NO HA DATA" when Home Assistant is connected but the screens blueprint sends

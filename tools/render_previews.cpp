@@ -95,5 +95,13 @@ int main(int argc, char **argv) {
     draw_frame(cv, s);
     save(dir + "/" + n + ".ppm", buf);
   }
+  // one clock per weather condition (wx-<condition>.ppm)
+  const char *conds[] = {"sunny", "clear-night", "partlycloudy", "cloudy", "rainy", "snowy", "lightning", "fog", "windy"};
+  for (const char *c : conds) {
+    UiState s = base;
+    s.weather_cond = c;
+    draw_frame(cv, s);
+    save(dir + "/wx-" + c + ".ppm", buf);
+  }
   return 0;
 }
