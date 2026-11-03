@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.0
+
+- New "Soft LED" look on every screen: glowing round LEDs, one 5x7 font (no tiny
+  3x5 text), unlit LED grid behind the clock digits, redrawn 9x9 and 11x11 icons.
+- 20 fully saturated theme colours (`Theme Color`); status colours (battery,
+  alarms) stay fixed, night mode still turns everything red.
+- Quick settings: swipe down on the clock. Battery, Wi-Fi, HA link and time,
+  plus brightness, ball volume, night mode, Do Not Disturb, audio output, timer.
+- Do Not Disturb: normal notifications no longer light the LED and HA LED
+  flashes are skipped; urgent alerts, timer and siren still sound.
+- Sendspin album artwork on the player screen, as LED dots or the full image
+  (`Artwork Style`).
+- What's that plane: with `Plane Spotting` on, every new plane from the
+  What's-that-plane integration is shown for 15 s (several planes cycle),
+  with a takeoff icon for departures from `Home Airport` and a landing icon
+  otherwise. Screens blueprint gains a "What's that plane" section.
+- All drawing moved to `pixizhi_draw.h`; `tools/render_previews.cpp` renders
+  the docs images with the same code.
+
 ## 1.0.0
 
 - Public, credential-free firmware: Wi-Fi via the `PixiZhi Setup` hotspot with an

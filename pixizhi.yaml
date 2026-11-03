@@ -1,5 +1,5 @@
 # =============================================================================
-#  PixiZhi SpotPear 1.0.0 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
+#  PixiZhi SpotPear 1.1.0 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
 #  Standby clock + up to 6 light / media player / thermostat screens picked in
 #  Home Assistant, pizza button screen, notification center, kitchen timer,
 #  pixel clock, Sendspin speaker, siren, LED notifications,
@@ -18,11 +18,12 @@ esphome:
   friendly_name: ${friendly_name}
   project:
     name: pixizhi.spotpear
-    version: "1.0.0"
+    version: "1.1.0"
   min_version: 2026.11.0-dev
   name_add_mac_suffix: false
   includes:
     - pixizhi_ui.h
+    - pixizhi_draw.h
   on_boot:
     priority: -100
     then:
@@ -431,12 +432,48 @@ api:
         on_ms: int
         off_ms: int
       then:
-        - script.execute:
-            id: flash_led
-            rgb: !lambda return rgb;
-            count: !lambda return count;
-            on_ms: !lambda return on_ms;
-            off_ms: !lambda return off_ms;
+        - if:
+            condition:
+              lambda: return id(dnd).state;
+            then:
+              - logger.log: "LED flash skipped (Do Not Disturb)"
+            else:
+              - script.execute:
+                  id: flash_led
+                  rgb: !lambda return rgb;
+                  count: !lambda return count;
+                  on_ms: !lambda return on_ms;
+                  off_ms: !lambda return off_ms;
+    # Planes from the What's-that-plane integration (one list entry per visible plane).
+    - action: set_planes
+      variables:
+        models: string[]
+        callsigns: string[]
+        airlines: string[]
+        origins: string[]
+        destinations: string[]
+        registrations: string[]
+      then:
+        - lambda: |-
+            const size_t n = models.size();
+            auto at = [](const std::vector<std::string> &v, size_t i) { return i < v.size() ? v[i] : std::string(); };
+            std::vector<std::string> visible;
+            for (size_t i = 0; i < n; i++) {
+              std::string key = at(callsigns, i).empty() ? at(registrations, i) : at(callsigns, i);
+              if (key.empty()) key = at(models, i) + at(origins, i) + at(destinations, i);
+              visible.push_back(key);
+              bool known = std::find(id(plane_shown).begin(), id(plane_shown).end(), key) != id(plane_shown).end();
+              if (!known && id(plane_spotting).state) {
+                // Stored as: model, callsign (shown as the flight code), airline, from, to, registration.
+                id(plane_queue).push_back({at(models, i), at(callsigns, i), at(airlines, i), at(origins, i), at(destinations, i), at(registrations, i)});
+                id(plane_shown).push_back(key);
+              }
+            }
+            // Forget planes that left the view, so they show again if they return later.
+            std::vector<std::string> keep;
+            for (auto &k : id(plane_shown))
+              if (std::find(visible.begin(), visible.end(), k) != visible.end()) keep.push_back(k);
+            id(plane_shown) = keep;
     - action: clear_slot
       variables:
         slot: int
@@ -863,6 +900,118 @@ globals:
         if (!api::global_api_server->is_connected()) return false;
         return id(ui_last_sync) != 0 && (uint32_t)(millis() - id(ui_last_sync)) <= pixizhi::HA_STALE_MS;
       }
+  # Snapshot of everything the renderer needs (see pixizhi_draw.h).
+  - id: ui_fill
+    # void* because globals are declared before the headers are included.
+    type: std::function<void(void*)>
+    initial_value: |-
+      [](void *out) {
+        using namespace pixizhi::draw;
+        UiState &s = *static_cast<UiState *>(out);
+        const uint32_t now = millis();
+        int ci = id(clock_color).active_index().value_or(THEME_DEFAULT);
+        s.accent = rgb(THEME_COLORS[std::max(0, std::min(THEME_COLOR_COUNT - 1, ci))].rgb);
+        s.scroll_ms = now - id(ui_scroll_ms);
+        s.anim_ms = now;
+        s.ha_online = id(ha_online)();
+        s.wifi_online = wifi::global_wifi_component->is_connected();
+        if (!id(ui_message).empty() && (int32_t)(id(ui_message_until) - now) > 0) s.message = id(ui_message);
+        auto t = id(ha_time).now();
+        s.time_valid = t.is_valid(); s.hour = t.hour; s.minute = t.minute;
+        s.weather_ok = id(w_ok); s.weather_cond = id(w_cond); s.weather_temp = id(w_temp); s.weather_frame = id(weather_frame);
+        s.status_row = id(status_row);
+        s.desk_temp = id(desk_temp); s.desk_rh = id(desk_rh);
+        s.music_line = id(standby_music_enabled) && id(standby_state) == "playing" && !id(standby_title).empty();
+        s.music_title = id(standby_title); s.music_artist = id(standby_artist);
+        s.alert_count = id(nq_title).size();
+        s.battery = id(battery_percentage).state;
+        s.charging = id(battery_charging).state;
+        s.battery_ring = id(battery_ring).state;
+        s.battery_low = id(battery_low)();
+        s.brightness_feedback = (int32_t)(id(clock_brightness_until) - now) > 0 ? (int) roundf(id(gs_target_brightness) * 100) : -1;
+        for (int i = 0; i < 6; i++) {
+          auto &v = s.slots[i];
+          v.eid = id(slot_eid)[i]; v.label = id(slot_label)[i]; v.state = id(slot_state)[i];
+          v.title = id(slot_title)[i]; v.artist = id(slot_artist)[i]; v.action = id(slot_action)[i]; v.unit = id(slot_unit)[i];
+          v.modes = id(slot_modes)[i]; v.presets = id(slot_presets)[i]; v.sources = id(slot_sources)[i]; v.repeat = id(slot_repeat)[i];
+          v.stale = id(slot_seen)[i] == 0 || (uint32_t)(now - id(slot_seen)[i]) > pixizhi::HA_STALE_MS;
+          v.available = !v.stale && v.state != "unavailable" && v.state != "unknown";
+          v.dimmable = id(slot_dimmable)[i]; v.color = id(slot_color_capable)[i]; v.white = id(slot_white)[i];
+          v.muted = id(slot_muted)[i]; v.shuffle = id(slot_shuffle)[i];
+          v.pending = id(slot_pending)[i]; v.features = id(slot_features)[i]; v.bri = id(slot_bri)[i];
+          v.expected = id(slot_expected)[i]; v.vol = id(slot_vol)[i]; v.tnow = id(slot_tnow)[i]; v.ttarget = id(slot_ttarget)[i];
+          v.tmin = id(slot_tmin)[i]; v.tmax = id(slot_tmax)[i]; v.step = id(slot_step)[i];
+          auto &st = s.status[i];
+          st.label = id(status_labels)[i]; st.icon = id(status_icons)[i]; st.value = id(status_value)[i];
+          st.target = id(status_target)[i]; st.active = id(status_active)[i]; st.priority = id(status_priority)[i];
+        }
+        s.cur_slot = id(cur_slot); s.category = id(ui_category); s.list_offset = id(ui_list_offset);
+        s.status_detail = id(ui_status_detail);
+        s.dragging = id(gs_rotating) && id(gs_touch_active); s.dial_value = id(ui_dial_value); s.volume_limit = id(ui_volume_limit);
+        s.n_count = id(nq_title).size();
+        if (s.n_count > 0) {
+          s.n_title = id(nq_title)[0]; s.n_msg = id(nq_msg)[0]; s.n_icon = id(nq_icon)[0];
+          s.n_color = id(nq_color)[0]; s.n_urgent = id(nq_urgent)[0];
+          s.n_age = pixizhi::age_label(id(nq_time)[0], t.is_valid() ? (uint32_t) t.timestamp : 0);
+        }
+        s.n_line = id(notification_line);
+        s.timer_left = id(timer_left); s.timer_set_min = id(timer_set_min);
+        s.timer_running = id(timer_running); s.timer_done = id(timer_done);
+        for (int k = 0; k < 12; k++) { s.pizza_labels[k] = id(pizza_labels)[k]; s.pizza_keys[k] = id(pizza_keys)[k]; }
+        s.pizza_pages = id(pizza_page_count)();
+        s.pizza_page = std::min(id(pizza_pg), s.pizza_pages - 1);
+        s.pizza_sel = id(pizza_sel);
+        s.q_brightness = id(is_night)() ? (int) id(night_brightness).state
+            : (int) roundf(id(screen_light).remote_values.get_brightness() * 100);
+        s.q_volume = (int) roundf(id(ball_media_player).volume * 100);
+        s.q_night = id(night_mode).state; s.q_dnd = id(dnd).state;
+        s.q_usb = id(audio_output).active_index().value_or(0) == 1;
+        if (id(plane_active) && id(plane_idx) < (int) id(plane_queue).size()) {
+          const auto &p = id(plane_queue)[id(plane_idx)];
+          s.p_model = p[0]; s.p_flight = p[1]; s.p_airline = p[2]; s.p_origin = p[3]; s.p_dest = p[4]; s.p_callsign = p[5];
+          std::string home = id(home_airport).state;
+          for (auto &c : home) c = toupper(c);
+          std::string origin = p[3];
+          for (auto &c : origin) c = toupper(c);
+          s.p_takeoff = !home.empty() && origin == home;
+          s.p_index = id(plane_idx); s.p_count = id(plane_queue).size();
+          s.p_remaining = 1.0f - std::min(1.0f, (now - id(plane_start_ms)) / 15000.0f);
+        }
+        // Sendspin artwork belongs to the ball's own playback: show it on the
+        // player screen whose current title matches the Sendspin track.
+        if (id(art_ready) && s.cur_slot >= 0 && s.cur_slot < 6 && s.slots[s.cur_slot].music() &&
+            !id(np_title).state.empty() && id(np_title).state == s.slots[s.cur_slot].title) {
+          s.art = id(artwork_img).get_data_start();
+          s.art_w = id(artwork_img).get_width(); s.art_h = id(artwork_img).get_height();
+          s.art_led = id(artwork_style).active_index().value_or(0) == 0;
+        }
+        int v = id(ui_view);
+        s.screen = id(overlay) == pixizhi::OVERLAY_NOTIFICATIONS ? S_ALERTS : id(overlay) == pixizhi::OVERLAY_TIMER ? S_TIMER
+            : (id(cur_slot) == pixizhi::SLOT_PIZZA && v == pixizhi::VIEW_STANDBY) ? S_PIZZA : v;
+      }
+  - id: art_ready
+    type: bool
+    initial_value: "false"
+  # What's-that-plane queue: one entry per new plane (model, flight, airline, from, to, callsign).
+  - id: plane_queue
+    type: std::vector<std::array<std::string, 6>>
+  - id: plane_shown
+    type: std::vector<std::string>
+  - id: plane_active
+    type: bool
+    initial_value: "false"
+  - id: plane_idx
+    type: int
+    initial_value: "0"
+  - id: plane_start_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: plane_prev_view
+    type: int
+    initial_value: "0"
+  - id: plane_prev_slot
+    type: int
+    initial_value: "-1"
   - id: wheel_rgb
     type: int
     initial_value: "0xFFFFFF"
@@ -1078,6 +1227,23 @@ audio_file:
   - id: chime_sound
     file: sounds/chime.wav
 
+# Album artwork from the Sendspin server, decoded to 104x104 RGB565.
+image:
+  - platform: sendspin
+    id: artwork_slot
+    format: JPEG
+    type: RGB565
+    byte_order: LITTLE_ENDIAN
+    resize: 104x104
+    current_image:
+      id: artwork_img
+    on_image_display:
+      - lambda: id(art_ready) = true;
+      - script.execute: ui_render
+    on_image_clear:
+      - lambda: id(art_ready) = false;
+      - script.execute: ui_render
+
 media_source:
   - platform: sendspin
     id: sendspin_source
@@ -1153,6 +1319,26 @@ switch:
     entity_category: config
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    id: dnd
+    name: Do Not Disturb
+    icon: mdi:minus-circle
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - script.execute: notif_led
+      - script.execute: ui_render
+    on_turn_off:
+      - script.execute: notif_led
+      - script.execute: ui_render
+  - platform: template
+    id: plane_spotting
+    name: Plane Spotting
+    icon: mdi:airplane
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_off:
+      - script.execute: plane_end
   - platform: template
     id: battery_ring
     name: Battery Ring
@@ -1303,19 +1489,49 @@ select:
             - script.execute: apply_audio_output
   - platform: template
     id: clock_color
-    name: Clock Color
+    name: Theme Color
     icon: mdi:palette
     entity_category: config
     optimistic: true
     restore_value: true
+    # Same order as THEME_COLORS in pixizhi_draw.h.
     options:
       - "Red"
-      - "Green"
+      - "Vermilion"
+      - "Orange"
       - "Amber"
+      - "Yellow"
+      - "Lime"
+      - "Chartreuse"
+      - "Green"
+      - "Spring"
+      - "Mint"
       - "Cyan"
+      - "Sky"
+      - "Azure"
+      - "Blue"
+      - "Indigo"
+      - "Violet"
+      - "Purple"
+      - "Magenta"
+      - "Pink"
+      - "White"
     initial_option: "Amber"
     on_value:
       - script.execute: apply_standby_style
+      - script.execute: ui_render
+  - platform: template
+    id: artwork_style
+    name: Artwork Style
+    icon: mdi:image-filter-vintage
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    options:
+      - "LED dots"
+      - "Full image"
+    initial_option: "LED dots"
+    on_value:
       - script.execute: ui_render
   - platform: template
     id: longpress_mode
@@ -1328,6 +1544,19 @@ select:
       - "HA action"
       - "Timer"
     initial_option: "HA action"
+
+text:
+  - platform: template
+    id: home_airport
+    name: Home Airport
+    icon: mdi:airport
+    entity_category: config
+    mode: text
+    optimistic: true
+    restore_value: true
+    initial_value: FRA
+    min_length: 0
+    max_length: 4
 
 datetime:
   - platform: template
@@ -1694,7 +1923,9 @@ touchscreen:
                 int maxoff=std::max(0,((count-1)/3)*3);id(ui_list_offset)=std::max(0,std::min(maxoff,id(ui_list_offset)+(dx<0?3:-3)));id(ui_render).execute();
               } else if(v==7){int q=id(ui_status_detail);id(ui_status_detail)=(q+(dx<0?1:5))%6;id(ui_render).execute();}
               else if(v==0||v==2)id(ui_cycle).execute(dx<0?1:-1);
-            }else if(dy>0)id(ui_back).execute();
+            }else if(v==pixizhi::VIEW_PLANE)id(plane_end).execute();
+            else if(dy>0){if(v==pixizhi::VIEW_STANDBY)id(ui_open).execute(pixizhi::VIEW_QUICK);else if(v!=pixizhi::VIEW_QUICK)id(ui_back).execute();}
+            else if(v==pixizhi::VIEW_QUICK)id(ui_home).execute();
             else if(v==0)id(ui_open).execute(pixizhi::VIEW_MORE);
             else if(v==2){int s=id(cur_slot);if(s>=0&&s<6){auto &e=id(slot_eid)[s];if(e.rfind("climate.",0)==0)id(ui_open).execute(pixizhi::VIEW_CLIMATE_MODES);else if(e.rfind("media_player.",0)==0)id(ui_open).execute(pixizhi::VIEW_MUSIC_OPTIONS);else id(ui_colors_open).execute();}}
             return;
@@ -1999,6 +2230,11 @@ script:
     then:
       - lambda: |-
           int v=id(ui_view),s=id(cur_slot);
+          if(v==pixizhi::VIEW_PLANE){id(plane_end).execute();return;}
+          if(v==pixizhi::VIEW_QUICK){
+            if(y>=72&&y<=214){int col=x<90?0:x<150?1:2,row=y<144?0:1;id(quick_tile).execute(row*3+col);}
+            return;
+          }
           if(y>=207 && x>=91 && x<=149){id(ui_home).execute();return;}
           if(v==1){if(y>=43&&y<=110)id(ui_category_open).execute(x<120?0:1);
             else if(y>=116&&y<=187){if(x<120)id(ui_category_open).execute(2);else id(ui_open).execute(pixizhi::VIEW_MORE);}return;}
@@ -2029,10 +2265,10 @@ script:
             if(y>=161&&y<=204){if(x<120){bool on=id(slot_pending)[s]==1?id(slot_expected)[s]>0:id(slot_state)[s]=="on";id(ui_command).execute(s,1,on?0:1,"");}
               else if(id(slot_color_capable)[s]||id(slot_white)[s])id(ui_colors_open).execute();}
           } else if(e.rfind("media_player.",0)==0){int f=id(slot_features)[s];
-            if(y>=128&&y<=178){if(x<87&&(f&16))id(ui_command).execute(s,11,0,"media_previous_track");
+            if(y>=160&&y<=206){if(x<87&&(f&16))id(ui_command).execute(s,11,0,"media_previous_track");
               else if(x>153&&(f&32))id(ui_command).execute(s,11,0,"media_next_track");
               else if(x>=87&&x<=153){bool playing=id(slot_pending)[s]==5?id(slot_expected)[s]>0:id(slot_state)[s]=="playing";if((playing&&(f&1))||(!playing&&(f&(512|16384))))id(ui_command).execute(s,5,playing?0:1,"");}}
-            else if(y>=55&&y<=123){id(ui_open).execute(pixizhi::VIEW_MUSIC_OPTIONS);}
+            else if(y>=26&&y<=155){id(ui_open).execute(pixizhi::VIEW_MUSIC_OPTIONS);}
           } else {
             if(y>=145&&y<=181&&(x<95||x>145)&&(id(slot_features)[s]&1)){
               float t=id(slot_pending)[s]==4?id(slot_expected)[s]:id(slot_ttarget)[s];float step=id(slot_step)[s];
@@ -2093,318 +2329,27 @@ script:
   - id: ui_render
     then:
       - lambda: id(ui_frame_dirty) = true;
+  # All drawing lives in pixizhi_draw.h; this only picks the canvas and fills the state.
   - id: ui_paint_frame
     then:
       - lambda: |-
           if (!id(ui_ready) || (id(overlay)==pixizhi::OVERLAY_NONE && id(ui_view)==pixizhi::VIEW_STANDBY && id(cur_slot)!=pixizhi::SLOT_PIZZA) || id(overlay)>2) return;
-          lv_obj_t *cv = id(overlay)==pixizhi::OVERLAY_NOTIFICATIONS ? id(notif_canvas) : id(overlay)==pixizhi::OVERLAY_TIMER ? id(timer_canvas) : id(cur_slot)==pixizhi::SLOT_PIZZA && id(ui_view)==pixizhi::VIEW_STANDBY ? id(pizza_canvas) : id(ui_canvas);
+          lv_obj_t *cv = id(overlay)==pixizhi::OVERLAY_NOTIFICATIONS ? id(notif_canvas) : id(overlay)==pixizhi::OVERLAY_TIMER ? id(timer_canvas)
+              : id(cur_slot)==pixizhi::SLOT_PIZZA && id(ui_view)==pixizhi::VIEW_STANDBY ? id(pizza_canvas) : id(ui_canvas);
           if (cv == nullptr) return;
+          if (!id(ui_ready)) return;
           lv_draw_buf_t *buf = lv_canvas_get_draw_buf(cv);
           if (buf == nullptr || buf->data == nullptr) return;
           const auto cf = buf->header.cf;
           if (cf != LV_COLOR_FORMAT_RGB565 && cf != LV_COLOR_FORMAT_ARGB8888) return;
-          const int bw = static_cast<int>(buf->header.w), bh = static_cast<int>(buf->header.h);
-          const uint32_t stride = buf->header.stride;
-          const bool frame_night = id(is_night)();
-          auto put_pixel = [&](int x, int y, lv_color_t color, lv_opa_t alpha) {
-            if (x < 0 || y < 0 || x >= bw || y >= bh) return;
-            if (frame_night) color = lv_color_make(std::max({color.red,color.green,color.blue}),0,0);
-            uint8_t *row = buf->data + static_cast<size_t>(y) * stride;
-            if (cf == LV_COLOR_FORMAT_RGB565) {
-              const uint16_t rgb = ((uint16_t)(color.red >> 3) << 11) |
-                                   ((uint16_t)(color.green >> 2) << 5) | (color.blue >> 3);
-              memcpy(row + x * 2, &rgb, sizeof(rgb));
-            } else {
-              uint8_t *pixel = row + x * 4;
-              pixel[0] = color.blue; pixel[1] = color.green; pixel[2] = color.red; pixel[3] = alpha;
-            }
-          };
-
-          static const uint32_t palette[] = {0xFF2A2A,0x2EFF5C,0xFFB000,0x1AD9FF};
-          int ci = id(clock_color).active_index().value_or(2);
-          uint32_t accent = palette[std::max(0,std::min(3,ci))], white = 0xFFFFFF, dim = 0x858585;
-          lv_canvas_fill_bg(cv, lv_color_hex(0), LV_OPA_COVER);
-          auto rect = [&](int x,int y,int w,int h,uint32_t col) {
-            for (int yy=std::max(0,y); yy<std::min(240,y+h); ++yy)
-              for (int xx=std::max(0,x); xx<std::min(240,x+w); ++xx)
-                put_pixel(xx,yy,lv_color_hex(col),LV_OPA_COVER);
-          };
-          struct Glyph {char c; uint8_t row[7];};
-          static const Glyph glyphs[] = {
-           {'0',{14,17,19,21,25,17,14}},{'1',{4,12,4,4,4,4,14}}, {'2',{14,17,1,2,4,8,31}},
-           {'3',{30,1,1,14,1,1,30}},{'4',{2,6,10,18,31,2,2}},{'5',{31,16,16,30,1,1,30}},
-           {'6',{14,16,16,30,17,17,14}},{'7',{31,1,2,4,8,8,8}},{'8',{14,17,17,14,17,17,14}},
-           {'9',{14,17,17,15,1,1,14}},{'A',{14,17,17,31,17,17,17}},{'B',{30,17,17,30,17,17,30}},
-           {'C',{14,17,16,16,16,17,14}},{'D',{30,17,17,17,17,17,30}},{'E',{31,16,16,30,16,16,31}},
-           {'F',{31,16,16,30,16,16,16}},{'G',{14,17,16,23,17,17,15}},{'H',{17,17,17,31,17,17,17}},
-           {'I',{14,4,4,4,4,4,14}},{'J',{7,2,2,2,18,18,12}},{'K',{17,18,20,24,20,18,17}},
-           {'L',{16,16,16,16,16,16,31}},{'M',{17,27,21,21,17,17,17}},{'N',{17,25,25,21,19,19,17}},
-           {'O',{14,17,17,17,17,17,14}},{'P',{30,17,17,30,16,16,16}},{'Q',{14,17,17,17,21,18,13}},
-           {'R',{30,17,17,30,20,18,17}},{'S',{15,16,16,14,1,1,30}},{'T',{31,4,4,4,4,4,4}},
-           {'U',{17,17,17,17,17,17,14}},{'V',{17,17,17,17,17,10,4}},{'W',{17,17,17,21,21,21,10}},
-           {'X',{17,17,10,4,10,17,17}},{'Y',{17,17,10,4,4,4,4}},{'Z',{31,1,2,4,8,16,31}},
-           {'%',{17,2,4,4,8,16,17}},{'-',{0,0,0,31,0,0,0}},{'+',{0,4,4,31,4,4,0}},
-           {'.',{0,0,0,0,0,6,6}},{':',{0,4,4,0,4,4,0}},{'^',{6,9,9,6,0,0,0}},
-           {'/',{1,2,2,4,8,8,16}},{'?',{14,17,1,2,4,0,4}},{' ',{0,0,0,0,0,0,0}}
-          };
-          struct Small {char c;uint8_t w;uint8_t r[7];};
-          static const Small small[] = {
-            {'+',3,{0,2,7,2,0}}, {'/',3,{1,1,2,4,4}}, {'0',3,{7,5,5,5,7}}, {'1',3,{2,6,2,2,7}}, {'2',3,{7,1,7,4,7}}, {'3',3,{7,1,7,1,7}},
-            {'4',3,{5,5,7,1,1}}, {'5',3,{7,4,7,1,7}}, {'6',3,{7,4,7,5,7}}, {'7',3,{7,1,2,2,2}},
-            {'8',3,{7,5,7,5,7}}, {'9',3,{7,5,7,1,7}}, {'^',2,{3,3,0,0,0}}, {'-',3,{0,0,7,0,0}},
-            {':',1,{0,1,0,1,0}}, {' ',1,{0,0,0,0,0}},
-            {'.',1,{0,0,0,0,1}}, {'%',3,{5,1,2,4,5}},
-            {'K',3,{5,5,6,5,5}}, {'Q',3,{2,5,5,3,1}}, {'X',3,{5,5,2,5,5}}, {'Z',3,{7,1,2,4,7}}, {'?',3,{6,1,2,0,2}},
-            {'A',3,{2,5,7,5,5}}, {'B',3,{6,5,6,5,6}}, {'C',3,{3,4,4,4,3}}, {'D',3,{6,5,5,5,6}},
-            {'E',3,{7,4,6,4,7}}, {'F',3,{7,4,6,4,4}}, {'G',3,{3,4,5,5,3}}, {'H',3,{5,5,7,5,5}},
-            {'I',3,{7,2,2,2,7}}, {'J',3,{1,1,1,5,2}}, {'L',3,{4,4,4,4,7}}, {'M',5,{0x11,0x1B,0x15,0x11,0x11}},
-            {'N',4,{9,13,11,9,9}}, {'O',3,{2,5,5,5,2}}, {'P',3,{6,5,6,4,4}}, {'R',3,{6,5,6,5,5}},
-            {'S',3,{3,4,2,1,6}}, {'T',3,{7,2,2,2,2}}, {'U',3,{5,5,5,5,7}}, {'V',3,{5,5,5,5,2}},
-            {'W',5,{0x11,0x11,0x15,0x1B,0x11}}, {'Y',3,{5,5,2,2,2}}};
-          // UTF-8 degree and common Latin accents become readable pixel glyphs.
-          auto ascii = [&](const std::string &v) {
-           std::string r;
-           for (size_t i=0;i<v.size();++i) {
-            uint8_t c=v[i];
-            if(c<128) r+=(char)toupper(c);
-            else if(c==0xC2 && i+1<v.size() && (uint8_t)v[i+1]==0xB0) {r+='^';++i;}
-            else if(c==0xC3 && i+1<v.size()) {
-             uint8_t q=(uint8_t)v[++i]; q|=0x20;
-             r+=q>=0xA0&&q<=0xA5?'A':q==0xA7?'C':q<=0xAB?'E':q<=0xAF?'I':q==0xB1?'N':q<=0xB6?'O':q<=0xBC?'U':q>=0xBD?'Y':'?';
-            } else { r+='?'; while(i+1<v.size() && ((uint8_t)v[i+1]&0xC0)==0x80) ++i; }
-           }
-           return r;
-          };
-          auto small_glyph = [&](char c)->const Small*{for(auto &a:small)if(a.c==c)return &a;for(auto &a:small)if(a.c=='?')return &a;return &small[0];};
-          auto tw = [&](const std::string &v,int scale){int width=0;for(char c:v)width+=scale==1?(small_glyph(c)->w+1)*2:6*scale;return v.empty()?0:width-(scale==1?2:scale);};
-          auto text = [&](std::string v,int cx,int y,int scale,uint32_t color,int maxw=196,bool scroll=false) {
-           v=ascii(v);int cells=0,width=0;
-           for(char c:v){int w=scale==1?(small_glyph(c)->w+1)*2:6*scale;if(width+w>maxw)break;width+=w;cells++;}
-           cells=std::max(1,cells);
-           if(tw(v,scale)>maxw) {
-             if(scroll) {
-               uint32_t elapsed=millis()-id(ui_scroll_ms);int advance=elapsed<1800?0:(elapsed-1800)/220;
-               int offset=advance%(v.size()+10);if(offset>=(int)v.size())offset=0;
-               std::string loop=v+"   ";v=(loop+loop).substr(offset,cells);
-             } else v=v.substr(0,std::max(0,cells-1))+".";
-           }
-           int x=cx-tw(v,scale)/2;
-           for(char ch:v) {
-            if(scale==1){const Small *g=small_glyph(ch);for(int row=0;row<5;row++)for(int col=0;col<g->w;col++)if(g->r[row]&(1<<(g->w-1-col)))rect(x+col*2,y+row*2,2,2,color);x+=(g->w+1)*2;continue;}
-            const Glyph *g=nullptr; for(auto &a:glyphs) if(a.c==ch){g=&a;break;}
-            if(!g) for(auto &a:glyphs) if(a.c=='?'){g=&a;break;}
-            for(int row=0;row<7;row++) for(int col=0;col<5;col++) if(g->row[row]&(1<<(4-col)))
-             rect(x+col*scale,y+row*scale,scale>2?scale-1:scale,scale>2?scale-1:scale,color);
-            x+=6*scale;
-           }
-          };
-          struct Icon {const char *name;uint8_t row[7];};
-          static const Icon icons[]={
-           {"light",{28,34,65,65,34,28,28}}, {"music",{6,7,5,5,61,45,24}},
-           {"heating",{42,42,127,85,127,42,42}}, {"home",{8,28,62,127,34,42,42}},
-           {"power",{8,42,73,73,65,34,28}}, {"play",{32,48,56,60,56,48,32}},
-           {"pause",{54,54,54,54,54,54,54}}, {"prev",{5,13,29,61,29,13,5}},
-           {"next",{80,88,92,94,92,88,80}}, {"window",{127,73,73,127,73,73,127}},
-           {"door",{124,68,68,84,68,68,127}}, {"water",{8,8,28,28,62,62,28}},
-           {"lock",{28,34,34,127,99,107,127}}, {"motion",{12,12,24,62,88,20,34}},
-           {"battery",{28,62,34,42,42,34,62}}, {"alert",{8,28,28,62,54,119,127}},
-           {"flame",{8,12,28,58,62,54,28}}, {"minus",{0,0,0,62,0,0,0}},
-           {"plus",{0,8,8,62,8,8,0}}, {"palette",{28,42,85,73,67,34,28}},
-           {"back",{8,16,32,127,32,16,8}}, {"bell",{8,28,34,34,34,127,8}},
-           {"timer",{28,8,62,73,73,65,62}}, {"star",{8,8,127,62,28,54,65}},
-           {"moon",{14,24,48,48,50,30,12}}, {"bed",{0,64,94,127,127,65,65}},
-           {"sofa",{0,62,34,99,127,127,65}}, {"vacuum",{28,62,127,119,127,62,28}},
-           {"fan",{8,44,62,28,62,26,8}}, {"tv",{34,20,127,65,65,127,28}},
-           {"garage",{8,28,62,127,85,85,127}}, {"package",{28,62,107,93,65,65,127}},
-           {"info",{8,0,24,8,8,8,28}}, {"check",{0,1,3,70,108,56,16}},
-           {"mail",{0,127,99,85,73,65,127}}
-          };
-          auto icon = [&](const std::string &name,int cx,int y,int scale,uint32_t color) {
-           std::string key=name=="lightbulb"?"light":name=="fire"?"flame":name=="night"?"moon":name=="washer"?"water":name=="movie"?"tv":name;
-           const Icon *g=&icons[21];for(auto &i:icons) if(key==i.name){g=&i;break;}
-           for(int r=0;r<7;r++)for(int c=0;c<7;c++)if(g->row[r]&(1<<(6-c)))
-            rect(cx-7*scale/2+c*scale,y+r*scale,scale>2?scale-1:scale,scale>2?scale-1:scale,color);
-          };
-          auto dial = [&](float fraction) {
-           fraction=fmaxf(0,fminf(1,fraction));
-           for(int k=0;k<48;k++) {
-            float a=(135.0f+k*270.0f/47)*0.0174532925f;
-            int x=120+cosf(a)*109,y=120+sinf(a)*109;
-            rect(x-2,y-2,5,5,k<(int)roundf(fraction*48)?accent:0x252219);
-           }
-          };
-          auto number = [&](float v,int decimals) {char b[24];snprintf(b,sizeof(b),decimals==2?"%.2f":decimals==1?"%.1f":"%.0f",v);return std::string(b);};
-          auto footer = [&]() {icon("home",120,214,2,accent);};
-          auto stale = [&](int s) {return id(slot_seen)[s]==0 || (uint32_t)(millis()-id(slot_seen)[s])>45000;};
-          auto available = [&](int s) {return !stale(s) && id(slot_state)[s]!="unavailable" && id(slot_state)[s]!="unknown";};
-          int view=id(overlay)==pixizhi::OVERLAY_NOTIFICATIONS?11:id(overlay)==pixizhi::OVERLAY_TIMER?12:id(cur_slot)==pixizhi::SLOT_PIZZA&&id(ui_view)==pixizhi::VIEW_STANDBY?13:id(ui_view), s=id(cur_slot);
-          if(view==11) {
-           text("ALERTS",120,28,2,white,160);
-           if(id(nq_title).empty()){text("ALL CLEAR",120,112,2,accent,170);footer();}
-           else {
-            bool urgent=id(nq_urgent)[0];uint32_t ink=urgent?0xFF2A2A:id(nq_color)[0];
-            {auto tn=id(ha_time).now();std::string age=pixizhi::age_label(id(nq_time)[0],tn.is_valid()?(uint32_t)tn.timestamp:0);
-             text("1 / "+std::to_string(id(nq_title).size())+(age.empty()?"":"  "+age),120,47,1,dim,150);}
-            icon(id(nq_icon)[0],120,65,3,ink);
-            text(id(nq_title)[0],120,94,2,white,188,true);
-            std::string msg=ascii(id(nq_msg)[0]);std::vector<std::string> lines;
-            while(!msg.empty()) {size_t cut=std::min<size_t>(15,msg.size());if(cut<msg.size()){auto sp=msg.rfind(' ',cut);if(sp!=std::string::npos&&sp>0)cut=sp;}lines.push_back(msg.substr(0,cut));msg.erase(0,cut);while(!msg.empty()&&msg[0]==' ')msg.erase(0,1);}
-            int off=std::max(0,std::min(std::max(0,(int)lines.size()-3),id(notification_line)));id(notification_line)=off;
-            for(int r=0;r<3 && off+r<(int)lines.size();r++)text(lines[off+r],120,119+r*19,2,white,184);
-            if(off+3<(int)lines.size())text("V",120,183,2,ink,16);
-            text(urgent?"HOLD TO DISMISS":"TAP TO DISMISS",120,207,1,ink,132);
-           }
-          } else if(view==12) {
-           text("TIMER",120,28,2,white,160);
-           text(id(timer_done)?"TIME IS UP":id(timer_running)?"RUNNING":id(timer_left)==id(timer_set_min)*60?"SET MINUTES":"PAUSED",120,61,2,accent,180);
-           int left=std::max(0,id(timer_left));char b[16];snprintf(b,sizeof(b),"%02d:%02d",left/60,left%60);
-           text(b,120,91,5,white,184);
-           bool adjustable=!id(timer_running)&&!id(timer_done)&&id(timer_left)==id(timer_set_min)*60;
-           if(adjustable){text("-",62,139,3,accent,36);text("+",178,139,3,accent,36);text("MIN",120,146,1,dim,48);}
-           else text("HOLD BUTTON TO RESET",120,145,1,dim,180);
-           rect(65,175,110,2,accent);rect(65,201,110,2,accent);rect(65,175,2,28,accent);rect(173,175,2,28,accent);
-           text(id(timer_done)?"STOP":id(timer_running)?"PAUSE":adjustable?"START":"RESUME",120,182,2,white,100);
-           footer();
-          } else if(view==13) {
-           text("ACTIONS",120,24,2,white,168);
-           int xs[]={120,188,120,52},ys[]={51,105,159,105};
-           int pages=id(pizza_page_count)();if(id(pizza_pg)>=pages)id(pizza_pg)=0;
-           int base=id(pizza_pg)*pixizhi::PIZZA_PAGE_SIZE;
-           for(int k=0;k<4;k++) {
-            if(id(pizza_labels)[base+k].empty())continue;
-            uint32_t ink=k==id(pizza_sel)?white:accent;
-            icon(id(pizza_keys)[base+k],xs[k],ys[k],3,ink);
-            text(id(pizza_labels)[base+k],xs[k],ys[k]+26,1,ink,k==1||k==3?70:110);
-           }
-           if(pages>1)for(int p=0;p<pages;p++)rect(120-pages*5+p*10+1,200,6,6,p==id(pizza_pg)?white:dim);
-           icon("home",120,108,3,dim);footer();
-          } else if(view==1) {
-           icon("light",77,43,6,accent); text("LIGHTS",77,94,1,white,80);
-           icon("music",163,43,6,white);text("MUSIC",163,94,1,white,80);
-           icon("heating",77,118,6,accent);text("HEAT",77,169,1,white,80);
-           icon("home",163,118,6,white);text("HOME",163,169,1,white,80);
-           footer();
-          } else if(view==3 || view==4) {
-           text(view==4?"HEATING":"HOME",120,28,2,white,160);
-           std::vector<int> rows;
-           for(int i=0;i<6;i++) if(!id(slot_eid)[i].empty() && (view!=4 || id(slot_eid)[i].rfind("climate.",0)==0)) rows.push_back(i);
-           if(view==4) {
-            id(ui_list_offset)=std::max(0,std::min(std::max(0,(int)rows.size()-2),id(ui_list_offset)));
-            for(int r=0;r<2 && id(ui_list_offset)+r<(int)rows.size();r++) {
-             int q=rows[id(ui_list_offset)+r],y=61+r*67;
-             text(id(slot_label)[q],120,y,2,white,182,true);
-             std::string v=available(q)?number(id(slot_tnow)[q],1)+"^ / "+number(id(slot_ttarget)[q],1)+"^":"UNAVAILABLE";
-             text(v,120,y+23,2,accent,182);
-             text(id(slot_action)[q]=="heating"?"HEATING":id(slot_state)[q],120,y+43,1,dim,160);
-            }
-            if(id(ui_list_offset)>0){for(int k=0;k<3;k++){rect(192-k*2,49+k*2,2,2,dim);rect(192+k*2,49+k*2,2,2,dim);}}
-            if(id(ui_list_offset)+2<(int)rows.size())text("V",120,197,2,accent,18);
-            if(rows.empty()) text("ADD THERMOSTATS",120,108,1,dim);
-           } else {
-            int count=0;for(int q:rows)if(id(slot_eid)[q].rfind("light.",0)==0&&available(q)&&id(slot_state)[q]=="on")count++;
-            icon("light",48,64,2,accent);text(std::to_string(count)+" LIGHTS ON",135,67,1,white,144);
-            int r=0;for(int q:rows) if(id(slot_eid)[q].rfind("climate.",0)==0 && r<2) {
-             std::string v=id(slot_label)[q]+" "+(available(q)?(id(slot_tnow)[q]>-100?number(id(slot_tnow)[q],1)+"^":"--"):"--");
-             icon("heating",48,98+r*31,2,accent);text(v,137,101+r*31,1,white,140);r++;
-            }
-            int active=-1;for(int i=0;i<6;i++)if(id(status_active)[i]&&(active<0||id(status_priority)[i]>id(status_priority)[active]))active=i;
-            rect(49,173,142,1,0x303030);
-            if(active>=0){icon(id(status_icons)[active],51,184,2,accent);text(id(status_labels)[active],137,187,1,accent,136);}
-            else text("ALL CLEAR",120,187,1,dim);
-           }
-           footer();
-          } else if(view==5) {
-           text(id(ui_category)==0?"LIGHTS":"MUSIC",120,28,2,white,160);
-           std::vector<int> slots;
-           for(int q=0;q<6;q++) {
-            auto &e=id(slot_eid)[q];
-            if((id(ui_category)==0&&(e.rfind("light.",0)==0||e.rfind("switch.",0)==0)) || (id(ui_category)==1&&e.rfind("media_player.",0)==0))slots.push_back(q);
-           }
-           id(ui_list_offset)=std::max(0,std::min(std::max(0,(int)slots.size()-2),id(ui_list_offset)));
-           for(int r=0;r<2;r++) {int idx=id(ui_list_offset)+r;if(idx>=(int)slots.size())break;int q=slots[idx],y=67+r*62;
-            text(id(slot_label)[q],120,y,2,white,182,true);
-            text(available(q)?id(slot_state)[q]:"UNAVAILABLE",120,y+24,2,accent,174);
-           }
-           if(slots.empty())text("NO ENTITIES",120,108,1,dim);
-           if(id(ui_list_offset)>0){for(int k=0;k<3;k++){rect(192-k*2,49+k*2,2,2,dim);rect(192+k*2,49+k*2,2,2,dim);}}
-           if(id(ui_list_offset)+2<(int)slots.size())text("V",120,197,2,accent,18);
-           footer();
-          } else if(view==6) {
-           text("HOME TOOLS",120,28,2,white,180);
-           icon("bell",77,65,3,accent);text("ALERTS",77,93,1,white,80);
-           icon("timer",163,65,3,white);text("TIMER",163,93,1,white,80);
-           icon("star",77,130,3,accent);text("ACTIONS",77,158,1,white,80);
-           icon("home",163,130,3,white);text("STATUS",163,158,1,white,80);footer();
-          } else if(view==7) {
-           text("STATUS",120,28,2,white,160);
-           int q=id(ui_status_detail);
-           if(q>=0&&q<6) {icon(id(status_icons)[q],120,57,5,accent);text(id(status_labels)[q],120,105,3,white,190,true);
-            text(id(status_value)[q],120,140,2,white,184,true);text(id(status_active)[q]?"ACTIVE":"CLEAR",120,168,2,accent);
-            text(id(status_target)[q].empty()?"":"TAP TO OPEN",120,185,1,dim);}
-           footer();
-          } else if(view==10 && s>=0 && s<6) {
-           text("MUSIC OPTIONS",120,28,2,white,190);
-           int f=id(slot_features)[s];std::vector<std::string> rows;
-           if(f&8)rows.push_back(id(slot_muted)[s]?"UNMUTE":"MUTE");
-           if(f&32768)rows.push_back(id(slot_shuffle)[s]?"SHUFFLE OFF":"SHUFFLE ON");
-           if(f&262144)rows.push_back("REPEAT "+id(slot_repeat)[s]);
-           if(f&2048){std::string a=id(slot_sources)[s];size_t start=0;while(start<a.size()){size_t p=a.find('|',start);auto v=a.substr(start,p==std::string::npos?p:p-start);if(!v.empty())rows.push_back(v);if(p==std::string::npos)break;start=p+1;}}
-           for(int r=0;r<3;r++){int idx=id(ui_list_offset)+r;if(idx<(int)rows.size())text(rows[idx],120,72+r*39,1,white,180);}
-           if(rows.empty())text("NO EXTRA CONTROLS",120,108,1,dim,180);
-           if(rows.size()>3)text("SWIPE FOR MORE",120,195,1,dim,170);
-          footer();
-          } else if(view==9 && s>=0 && s<6) {
-           text("HEAT MODE",120,28,2,white,180);
-           std::string values=id(slot_modes)[s]+"|"+id(slot_presets)[s];
-           std::vector<std::string> choices;size_t start=0;
-           while(start<values.size()){size_t pos=values.find('|',start);std::string v=values.substr(start,pos==std::string::npos?pos:pos-start);if(!v.empty())choices.push_back(v);if(pos==std::string::npos)break;start=pos+1;}
-           for(int r=0;r<3;r++){int idx=id(ui_list_offset)+r;if(idx<(int)choices.size())text(choices[idx],120,72+r*39,2,white,170);}
-           if(choices.size()>3)text("SWIPE FOR MORE",120,195,1,dim,170);
-          footer();
-          } else if(view==2 && s>=0 && s<6) {
-           bool ok=available(s);int pending=id(slot_pending)[s];
-           auto &e=id(slot_eid)[s]; bool light=e.rfind("light.",0)==0||e.rfind("switch.",0)==0;
-           bool music=e.rfind("media_player.",0)==0;
-           bool dragging=id(gs_rotating)&&id(gs_touch_active);
-           if(!light)text(id(slot_label)[s],120,39,music?2:1,white,164);
-           if(light) {
-            float pct=dragging?id(ui_dial_value):(pending==2?id(slot_expected)[s]:id(slot_bri)[s]*100.0f/255.0f);
-            bool on=pending==1?id(slot_expected)[s]>0:pending==2?true:id(slot_state)[s]=="on";
-            if(id(slot_dimmable)[s])dial(on?pct/100:0);
-            std::string v=!ok?"--":!on?"OFF":id(slot_dimmable)[s]?number(pct,0)+"%":"ON";
-            text(v,120,66,6,white,190);
-            text(id(slot_label)[s],120,127,2,white,172);
-            icon("power",88,168,4,white);
-            if(id(slot_color_capable)[s]||id(slot_white)[s]) icon("palette",152,168,4,accent);
-           } else if(music) {
-            float vol=dragging?id(ui_dial_value):pending==3?id(slot_expected)[s]:id(slot_vol)[s]*100;
-            dial(vol/100);
-            text(id(slot_title)[s].empty()?id(slot_state)[s]:id(slot_title)[s],120,77,2,white,180,true);
-            text(id(slot_artist)[s],120,103,2,accent,180,true);
-            int f=id(slot_features)[s];
-            bool playing=pending==5?id(slot_expected)[s]>0:id(slot_state)[s]=="playing";
-            if(playing)for(int bar=0;bar<3;bar++){int h=1+((millis()/400+bar*2)%3);for(int j=0;j<h;j++)rect(112+bar*6,65-j*3,4,2,accent);}
-            icon("prev",66,145,2,(ok&&(f&16))?white:0x454545);
-            icon(playing?"pause":"play",120,141,3,(ok&&(f&(1|512|16384)))?accent:0x454545);
-            icon("next",174,145,2,(ok&&(f&32))?white:0x454545);
-            text("VOL "+number(vol,0)+"%",120,184,1,white,160);
-           } else {
-            float target=dragging?id(ui_dial_value):pending==4?id(slot_expected)[s]:id(slot_ttarget)[s];
-            float lo=id(slot_tmin)[s],hi=id(slot_tmax)[s];dial((target-lo)/fmaxf(1,hi-lo));
-            text(ok?number(target,id(slot_step)[s]<0.5f?2:1)+"^":"--",120,74,5,white,190);
-            text("NOW "+(ok?(id(slot_tnow)[s]>-100?number(id(slot_tnow)[s],1)+"^":"--"):"--")+" "+(id(slot_unit)[s].find("F")!=std::string::npos?"F":"C"),120,123,2,accent,178);
-            icon("minus",67,157,3,white);icon("plus",173,157,3,white);
-            icon("flame",120,151,3,id(slot_action)[s]=="heating"?accent:dim);
-            text(id(slot_action)[s]=="heating"?"HEATING":id(slot_state)[s],120,185,1,accent,150);
-           }
-           if(!ok) text(stale(s)?"STALE / OFFLINE":"UNAVAILABLE",120,199,1,dim,170);
-           else if(pending)text("SENDING",120,199,1,dim,120);
-           footer();
-          }
-          if(!id(ha_online)())text(wifi::global_wifi_component->is_connected()?"HA OFFLINE":"WIFI OFFLINE",120,15,1,dim,120);
-          if(!id(ui_message).empty() && (int32_t)(id(ui_message_until)-millis())>0) {
-           rect(34,195,172,14,0);text(id(ui_message),120,198,1,white,168);
-          }
+          pixizhi::draw::Canvas canvas{buf->data, (int) buf->header.w, (int) buf->header.h, buf->header.stride,
+              cf == LV_COLOR_FORMAT_RGB565 ? pixizhi::draw::RGB565 : pixizhi::draw::ARGB8888, id(is_night)()};
+          static pixizhi::draw::UiState state;
+          state = pixizhi::draw::UiState();
+          id(ui_fill)(&state);
+          pixizhi::draw::draw_frame(canvas, state);
+          if (state.screen == pixizhi::draw::S_ALERTS)
+            id(notification_line) = std::max(0, std::min(std::max(0, state.n_lines_total - 3), id(notification_line)));
           lv_obj_invalidate(cv);
   - id: clock_brightness_apply
     then:
@@ -2567,236 +2512,20 @@ script:
   - id: clock_paint_frame
     then:
       - lambda: |-
-          if (!id(ui_ready)) return;
-          struct G { char c; uint8_t w; uint8_t r[7]; };
-          static const G BIG[] = {
-            {'0',5,{0x0E,0x11,0x13,0x15,0x19,0x11,0x0E}}, {'1',5,{0x04,0x0C,0x04,0x04,0x04,0x04,0x0E}},
-            {'2',5,{0x0E,0x11,0x01,0x02,0x04,0x08,0x1F}}, {'3',5,{0x1F,0x02,0x04,0x02,0x01,0x11,0x0E}},
-            {'4',5,{0x02,0x06,0x0A,0x12,0x1F,0x02,0x02}}, {'5',5,{0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E}},
-            {'6',5,{0x06,0x08,0x10,0x1E,0x11,0x11,0x0E}}, {'7',5,{0x1F,0x01,0x02,0x04,0x08,0x08,0x08}},
-            {'8',5,{0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E}}, {'9',5,{0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C}},
-            {':',1,{0x00,0x01,0x01,0x00,0x01,0x01,0x00}}, {'-',5,{0x00,0x00,0x00,0x1F,0x00,0x00,0x00}}};
-          static const G SM[] = {
-            {'0',3,{7,5,5,5,7}}, {'1',3,{2,6,2,2,7}}, {'2',3,{7,1,7,4,7}}, {'3',3,{7,1,7,1,7}},
-            {'4',3,{5,5,7,1,1}}, {'5',3,{7,4,7,1,7}}, {'6',3,{7,4,7,5,7}}, {'7',3,{7,1,2,2,2}},
-            {'8',3,{7,5,7,5,7}}, {'9',3,{7,5,7,1,7}}, {'^',2,{3,3,0,0,0}}, {'-',3,{0,0,7,0,0}},
-            {':',1,{0,1,0,1,0}}, {' ',1,{0,0,0,0,0}},
-            {'.',1,{0,0,0,0,1}}, {'%',3,{5,1,2,4,5}},
-            {'K',3,{5,5,6,5,5}}, {'Q',3,{2,5,5,3,1}}, {'X',3,{5,5,2,5,5}}, {'Z',3,{7,1,2,4,7}}, {'?',3,{6,1,2,0,2}},
-            {'A',3,{2,5,7,5,5}}, {'B',3,{6,5,6,5,6}}, {'C',3,{3,4,4,4,3}}, {'D',3,{6,5,5,5,6}},
-            {'E',3,{7,4,6,4,7}}, {'F',3,{7,4,6,4,4}}, {'G',3,{3,4,5,5,3}}, {'H',3,{5,5,7,5,5}},
-            {'I',3,{7,2,2,2,7}}, {'J',3,{1,1,1,5,2}}, {'L',3,{4,4,4,4,7}}, {'M',5,{0x11,0x1B,0x15,0x11,0x11}},
-            {'N',4,{9,13,11,9,9}}, {'O',3,{2,5,5,5,2}}, {'P',3,{6,5,6,4,4}}, {'R',3,{6,5,6,5,5}},
-            {'S',3,{3,4,2,1,6}}, {'T',3,{7,2,2,2,2}}, {'U',3,{5,5,5,5,7}}, {'V',3,{5,5,5,5,2}},
-            {'W',5,{0x11,0x11,0x15,0x1B,0x11}}, {'Y',3,{5,5,2,2,2}}};
-          // 9x7 weather icons
-          struct I { const char *k; uint16_t r[7]; };
-          static const I ICO[] = {
-            {"sun",   {0x111,0x082,0x07C,0x17D,0x07C,0x082,0x111}},
-            {"moon",  {0x070,0x0E0,0x1C0,0x1C0,0x1C0,0x0E0,0x070}},
-            {"part",  {0x120,0x06C,0x0FE,0x1FF,0x1FF,0x0FE,0x000}},
-            {"cloud", {0x018,0x07C,0x0FE,0x1FF,0x1FF,0x0FE,0x000}},
-            {"rain",  {0x07C,0x0FE,0x1FF,0x0FE,0x000,0x092,0x124}},
-            {"snow",  {0x07C,0x0FE,0x1FF,0x0FE,0x000,0x155,0x0AA}},
-            {"bolt",  {0x07C,0x0FE,0x1FF,0x030,0x060,0x030,0x040}},
-            {"fog",   {0x000,0x1FF,0x000,0x0FE,0x000,0x1FF,0x000}},
-            {"wind",  {0x018,0x1E4,0x004,0x1F8,0x004,0x1E4,0x018}}};
-
           lv_obj_t *cv = id(dm_canvas);
           if (cv == nullptr) return;
+          if (!id(ui_ready)) return;
           lv_draw_buf_t *buf = lv_canvas_get_draw_buf(cv);
           if (buf == nullptr || buf->data == nullptr) return;
           const auto cf = buf->header.cf;
           if (cf != LV_COLOR_FORMAT_RGB565 && cf != LV_COLOR_FORMAT_ARGB8888) return;
-          const int bw = static_cast<int>(buf->header.w), bh = static_cast<int>(buf->header.h);
-          const uint32_t stride = buf->header.stride;
-          const bool frame_night = id(is_night)();
-          auto put_pixel = [&](int x, int y, lv_color_t color, lv_opa_t alpha) {
-            if (x < 0 || y < 0 || x >= bw || y >= bh) return;
-            if (frame_night) color = lv_color_make(std::max({color.red,color.green,color.blue}),0,0);
-            uint8_t *row = buf->data + static_cast<size_t>(y) * stride;
-            if (cf == LV_COLOR_FORMAT_RGB565) {
-              const uint16_t rgb = ((uint16_t)(color.red >> 3) << 11) |
-                                   ((uint16_t)(color.green >> 2) << 5) | (color.blue >> 3);
-              memcpy(row + x * 2, &rgb, sizeof(rgb));
-            } else {
-              uint8_t *pixel = row + x * 4;
-              pixel[0] = color.blue; pixel[1] = color.green; pixel[2] = color.red; pixel[3] = alpha;
-            }
-          };
-
-          bool night = id(is_night)();
-          static const uint32_t ON[4]  = {0xFF2A2A, 0x2EFF5C, 0xFFB000, 0x1AD9FF};
-          static const uint32_t OFF[4] = {0x2A0808, 0x082A10, 0x2A1D00, 0x06242A};
-          int ci = id(clock_color).active_index().value_or(2);
-          if (ci > 3) ci = 2;
-          lv_color_t con = lv_color_hex(ON[ci]);
-          lv_color_t coff = lv_color_hex(OFF[ci]);
-          lv_canvas_fill_bg(cv, lv_color_hex(0x000000), LV_OPA_COVER);
-
-          auto dot = [&](float cx, float cy, float rad, bool lit) {
-            lv_color_t c = lit ? con : coff;
-            int x0 = (int) floorf(cx - rad), x1 = x0 + std::max(1, (int)(rad * 2)) - 1;
-            int y0 = (int) floorf(cy - rad), y1 = y0 + std::max(1, (int)(rad * 2)) - 1;
-            for (int y = y0; y <= y1; y++) {
-              for (int x = x0; x <= x1; x++) {
-                if (x < 0 || y < 0 || x >= 240 || y >= 240) continue;
-                put_pixel(x, y, c, LV_OPA_COVER);
-              }
-            }
-          };
-          auto find = [&](char ch, bool big) -> const G * {
-            if (big) { for (auto &g : BIG) if (g.c == ch) return &g; }
-            else { for (auto &g : SM) if (g.c == ch) return &g; }
-            return nullptr;
-          };
-          auto width = [&](const std::string &str, bool big) -> int {
-            int cols = 0, n = 0;
-            for (char ch : str) { auto *g = find(ch, big); if (g) { cols += g->w; n++; } }
-            return n ? cols + n - 1 : 0;
-          };
-          auto text = [&](const std::string &str, bool big, float x, float y0, float pitch, float rad) {
-            int rows = big ? 7 : 5;
-            for (char ch : str) {
-              auto *g = find(ch, big);
-              if (!g) continue;
-              for (int r = 0; r < rows; r++)
-                for (int k = 0; k < g->w; k++)
-                  dot(x + k * pitch, y0 + r * pitch, rad, (g->r[r] >> (g->w - 1 - k)) & 1);
-              x += (g->w + 1) * pitch;
-            }
-          };
-
-          auto now = id(ha_time).now();
-          // ---- weather row (icon + temperature) ----
-          if(!id(ha_online)()) {
-            std::string msg=wifi::global_wifi_component->is_connected()?"HA OFFLINE":"WIFI OFFLINE";float p=3.0f;int cols=width(msg,false);
-            text(msg,false,120-cols*p/2+p/2,51,p,1.1f);
-          } else if (id(status_row) < 0 && id(w_ok)) {
-            const std::string &c = id(w_cond);
-            const char *key = "cloud";
-            if (c == "sunny") key = "sun";
-            else if (c == "clear-night") key = "moon";
-            else if (c == "partlycloudy") key = "part";
-            else if (c == "rainy" || c == "pouring") key = "rain";
-            else if (c == "lightning" || c == "lightning-rainy") key = "bolt";
-            else if (c == "snowy" || c == "snowy-rainy" || c == "hail") key = "snow";
-            else if (c == "fog") key = "fog";
-            else if (c == "windy" || c == "windy-variant") key = "wind";
-            const I *ic = &ICO[3];
-            for (auto &i : ICO) if (strcmp(i.k, key) == 0) ic = &i;
-            std::string t = esphome::to_string((int) roundf(id(w_temp))) + "^";
-            const float tp = 4.2f;
-            int tcols = width(t, false);
-            float total = (9 + 2 + tcols) * tp;
-            float x0 = 120 - total / 2 + tp / 2;
-            for (int r = 0; r < 7; r++)
-              for (int k = 0; k < 9; k++)
-                dot(x0 + k * tp + (id(weather_frame) % 2), 40 + r * tp + (id(weather_frame) >= 2 ? 1 : 0), 1.7f, (ic->r[r] >> (8 - k)) & 1);
-            text(t, false, x0 + 11 * tp, 44, tp, 1.7f);
-          }
-          // Built-in 7x7 pixel glyphs; HA sends symbolic names, never image bytes.
-          if (id(status_row) >= 0 && id(status_row) < 6 && id(status_active)[id(status_row)]) {
-            struct S { const char *name; uint8_t rows[7]; };
-            static const S STATUS[] = {
-              {"window", {127,73,73,127,73,73,127}},
-              {"door", {62,34,34,42,34,34,127}},
-              {"heating", {20,42,20,42,20,0,127}},
-              {"lock", {28,34,34,127,107,107,127}},
-              {"light", {28,34,65,34,28,28,28}},
-              {"water", {8,8,28,28,62,62,28}},
-              {"music", {15,9,9,9,57,57,7}},
-              {"motion", {12,12,48,30,20,36,66}},
-              {"battery", {28,127,65,93,93,65,127}},
-              {"home", {8,28,62,127,54,54,54}},
-              {"alert", {8,28,28,62,54,127,8}}
-            };
-            const S *glyph = &STATUS[sizeof(STATUS) / sizeof(STATUS[0]) - 1];
-            for (auto &g : STATUS) if (id(status_icons)[id(status_row)] == g.name) glyph = &g;
-            std::string label = id(status_labels)[id(status_row)];
-            for (auto &ch : label) {
-              if (ch >= 'a' && ch <= 'z') ch -= 32;
-              if (!find(ch, false)) ch = '?';
-            }
-            label = label.substr(0, 12);
-            int cols = 9 + width(label, false);
-            float pitch = fminf(4.0f, 174.0f / std::max(1, cols));
-            float x0 = 120 - cols * pitch / 2 + pitch / 2;
-            for (int r = 0; r < 7; r++)
-              for (int k = 0; k < 7; k++)
-                dot(x0 + k * pitch, 40 + r * pitch, pitch * 0.40f, (glyph->rows[r] >> (6-k)) & 1);
-            con = lv_color_hex(id(is_night)() ? 0x808080 : 0xFFFFFF);
-            coff = lv_color_hex(0x101010);
-            text(label, false, x0 + 9 * pitch, 40 + pitch, pitch, pitch * 0.40f);
-            // Restore the selected color for the large clock.
-            con = lv_color_hex(ON[ci]);
-            coff = lv_color_hex(OFF[ci]);
-          }
-          // ---- battery ring: outer edge, clockwise from 12 o'clock, hidden while charging ----
-          if (id(battery_ring).state && !id(battery_charging).state && !std::isnan(id(battery_percentage).state)) {
-            const float pct = fmaxf(0.0f, fminf(100.0f, id(battery_percentage).state));
-            const uint32_t ring_on = pct > 50 ? 0x2EFF5C : pct > 20 ? 0xFFB000 : 0xFF2A2A;
-            const int DOTS = 60, lit = (int) roundf(pct * DOTS / 100.0f);
-            lv_color_t save_on = con, save_off = coff;
-            con = lv_color_hex(ring_on); coff = lv_color_hex(0x161616);
-            for (int k = 0; k < DOTS; k++) {
-              float a = (-90.0f + k * 360.0f / DOTS) * 0.0174532925f;
-              dot(120 + cosf(a) * 115.0f, 120 + sinf(a) * 115.0f, 1.6f, k < lit);
-            }
-            con = save_on; coff = save_off;
-          }
-          // ---- time: widest digits that fit (25 columns) ----
-          std::string hm = now.is_valid() ? now.strftime("%H:%M") : std::string("--:--");
-          {
-            const float p = 8.8f;
-            int cols = width(hm, true);
-            text(hm, true, 120 - cols * p / 2 + p / 2, 120 - 3 * p, p, 3.7f);
-          }
-          // ---- date (or running timer) ----
-          std::string line;
-          if (id(timer_running)) {
-            char b[32];
-            snprintf(b, sizeof(b), "TIMER %02d:%02d", id(timer_left) / 60, id(timer_left) % 60);
-            line = b;
-          } else if (!id(standby_music_enabled) || id(standby_state) != "playing" || id(standby_title).empty()) {
-            auto number = [](const std::string &v, int decimals) -> std::string {
-              char *end = nullptr;
-              float f = strtof(v.c_str(), &end);
-              if (end == v.c_str() || *end != '\0' || !std::isfinite(f)) return "--";
-              char buf[20];
-              snprintf(buf, sizeof(buf), decimals ? "%.1f" : "%.0f", f);
-              return buf;
-            };
-            line = number(id(desk_temp), 1) + "^ " + number(id(desk_rh), 0) + "%";
-          }
-          con = lv_color_hex(id(is_night)() ? 0x808080 : 0xFFFFFF);
-          coff = lv_color_hex(0x101010);
-          if (!line.empty()) {
-            const float p = 4.2f;
-            int cols = width(line, false);
-            text(line, false, 120 - cols * p / 2 + p / 2, 172 - 2 * p, p, 1.8f);
-          }
-          if (id(standby_music_enabled) && id(standby_state)=="playing" && !id(standby_title).empty() && !id(timer_running)) {
-            con=lv_color_hex(ON[ci]);coff=lv_color_hex(OFF[ci]);
-            auto music_line = [&](std::string v,int y) {
-              for(char &c:v){c=toupper((unsigned char)c);if(!find(c,false))c='?';}
-              if(v.size()>14){uint32_t elapsed=millis()-id(ui_scroll_ms);int off=elapsed<1800?0:((elapsed-1800)/300)%(v.size()+3);v=(v+"   "+v).substr(off,14);}
-              int cols=width(v,false);float p=std::min(3.0f,180.0f/std::max(1,cols));
-              text(v,false,120-cols*p/2+p/2,y,p,p*0.40f);
-            };
-            music_line(id(standby_title),160);music_line(id(standby_artist),180);
-          }
-          if (!id(nq_title).empty()) {
-            std::string v=std::to_string(id(nq_title).size())+" ALERT";con=lv_color_hex(ON[ci]);
-            int cols=width(v,false);text(v,false,120-cols*2.5f/2+1.25f,207,2.5f,1.0f);
-          } else if (id(battery_low)()) {
-            std::string v="LOW BATTERY "+std::to_string((int)id(battery_percentage).state)+"%";con=lv_color_hex(0xFF2A2A);
-            int cols=width(v,false);text(v,false,120-cols*2.5f/2+1.25f,207,2.5f,1.0f);
-          }
-          if ((int32_t)(id(clock_brightness_until)-millis())>0) {
-            std::string v=std::to_string((int)roundf(id(gs_target_brightness)*100))+"%";con=lv_color_hex(ON[ci]);
-            int cols=width(v,false);text(v,false,120-cols*3.0f/2+1.5f,187,3.0f,1.2f);
-          }
+          pixizhi::draw::Canvas canvas{buf->data, (int) buf->header.w, (int) buf->header.h, buf->header.stride,
+              cf == LV_COLOR_FORMAT_RGB565 ? pixizhi::draw::RGB565 : pixizhi::draw::ARGB8888, id(is_night)()};
+          static pixizhi::draw::UiState state;
+          state = pixizhi::draw::UiState();
+          id(ui_fill)(&state);
+          state.screen = pixizhi::draw::S_CLOCK;
+          pixizhi::draw::draw_frame(canvas, state);
           lv_obj_invalidate(cv);
 
   - id: update_hint
@@ -3044,6 +2773,10 @@ script:
           }
           bool urg = false;
           for (bool u : id(nq_urgent)) urg |= u;
+          if (id(dnd).state && !urg) {
+            if (id(notif_led_on)) { auto off = id(led).turn_off(); off.perform(); id(notif_led_on) = false; }
+            return;
+          }
           uint32_t c = urg ? 0xFF0000 : id(nq_color).back();
           auto call = id(led).turn_on();
           call.set_rgb(((c >> 16) & 0xFF) / 255.0f, ((c >> 8) & 0xFF) / 255.0f, (c & 0xFF) / 255.0f);
@@ -3296,6 +3029,84 @@ script:
             lv_obj_add_flag(id(setup_card), LV_OBJ_FLAG_HIDDEN);
           }
 
+  # Shows queued planes one after another, 15 s each, then returns.
+  - id: plane_try_start
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return !id(plane_active) && !id(plane_queue).empty() && id(plane_spotting).state && id(ui_ready) &&
+                id(overlay) == pixizhi::OVERLAY_NONE && !(id(ui_view) == pixizhi::VIEW_STANDBY && id(cur_slot) >= 0 && id(cur_slot) < 6) &&
+                !id(siren_active) && id(setup_state) != 1 && id(setup_state) != 2 && !id(sendspin_pairing_visible);
+          then:
+            - lambda: |-
+                id(plane_prev_view) = id(ui_view);
+                id(plane_prev_slot) = id(cur_slot);
+                id(plane_active) = true;
+                id(plane_idx) = 0;
+                id(plane_start_ms) = millis();
+                id(ui_view) = pixizhi::VIEW_PLANE;
+                id(ui_scroll_ms) = millis();
+            - lvgl.page.show: dashboard_page
+            - script.execute: wake_screen
+            - script.execute: ui_render
+
+  - id: plane_end
+    then:
+      - if:
+          condition:
+            lambda: return id(plane_active);
+          then:
+            - lambda: |-
+                id(plane_active) = false;
+                id(plane_queue).clear();
+                id(cur_slot) = id(plane_prev_slot);
+            - if:
+                condition:
+                  lambda: return id(ui_view) == pixizhi::VIEW_PLANE && id(plane_prev_view) != pixizhi::VIEW_STANDBY && id(plane_prev_view) != pixizhi::VIEW_PLANE;
+                then:
+                  - script.execute:
+                      id: ui_open
+                      view: !lambda return id(plane_prev_view);
+                else:
+                  - if:
+                      condition:
+                        lambda: return id(ui_view) == pixizhi::VIEW_PLANE;
+                      then:
+                        - script.execute: show_current
+          else:
+            - lambda: id(plane_queue).clear();
+
+  - id: quick_tile
+    parameters:
+      tile: int
+    then:
+      - lambda: |-
+          if (tile == 0) {
+            static const int levels[] = {25, 50, 75, 100};
+            int cur = id(is_night)() ? (int) id(night_brightness).state : (int) roundf(id(screen_light).remote_values.get_brightness() * 100);
+            int next = 25;
+            for (int l : levels) if (l > cur + 2) { next = l; break; }
+            if (cur >= 98) next = 25;
+            if (id(is_night)()) { auto c = id(night_brightness).make_call(); c.set_value(next); c.perform(); }
+            else { auto c = id(screen_light).turn_on(); c.set_brightness(next / 100.0f); c.perform(); }
+          } else if (tile == 1) {
+            int cur = (int) roundf(id(ball_media_player).volume * 100);
+            int next = cur >= 100 ? 0 : std::min(100, (cur / 20 + 1) * 20);
+            auto c = id(ball_media_player).make_call(); c.set_volume(next / 100.0f); c.perform();
+          } else if (tile == 2) {
+            id(night_mode).toggle();
+          } else if (tile == 3) {
+            id(dnd).toggle();
+          } else if (tile == 4) {
+            auto c = id(audio_output).make_call();
+            c.set_index(id(audio_output).active_index().value_or(0) == 1 ? 0 : 1);
+            c.perform();
+          } else if (tile == 5) {
+            id(open_timer).execute();
+          }
+      - script.execute: ui_render
+
   - id: link_changed
     then:
       - script.execute: draw_dot_clock
@@ -3472,6 +3283,19 @@ interval:
   - interval: 1s
     then:
       - script.execute: setup_card_update
+  # Plane screen: start, advance every 15 s, redraw the countdown ring.
+  - interval: 250ms
+    then:
+      - lambda: |-
+          if (!id(plane_active)) { if (!id(plane_queue).empty()) id(plane_try_start).execute(); return; }
+          if (id(ui_view) != pixizhi::VIEW_PLANE) { id(plane_active) = false; id(plane_queue).clear(); return; }
+          if ((uint32_t)(millis() - id(plane_start_ms)) >= 15000) {
+            id(plane_idx)++;
+            id(plane_start_ms) = millis();
+            id(ui_scroll_ms) = millis();
+            if (id(plane_idx) >= (int) id(plane_queue).size()) { id(plane_end).execute(); return; }
+          }
+          id(ui_render).execute();
   - interval: 250ms
     then:
       - lambda: |-

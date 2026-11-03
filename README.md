@@ -1,6 +1,6 @@
 # PixiZhi SpotPear
 
-**1.0.0 · ESPHome firmware and Home Assistant blueprints for the Spotpear Ball v2**
+**1.1.0 · ESPHome firmware and Home Assistant blueprints for the Spotpear Ball v2**
 
 A bold pixel interface for a small round desktop display: clock, home controls,
 music, thermostats, status, notifications, timer, and four quick actions.
@@ -70,7 +70,7 @@ checks its MD5 before flashing. Wi-Fi, the API key and all settings are kept.
 
 The public firmware contains no credentials and no network-push OTA. To build
 your own variant instead, use ESPHome's **Take control** on the discovered device
-(or copy `pixizhi.yaml`, `pixizhi_ui.h`, `components/`, `fonts/`, `sounds/`) and add
+(or copy `pixizhi.yaml`, `pixizhi_ui.h`, `pixizhi_draw.h`, `components/`, `fonts/`, `sounds/`) and add
 your own `ota:`/`wifi:` settings; see [configuration notes](docs/CONFIGURATION.md).
 
 ## Use

@@ -28,6 +28,8 @@ enum View : int {
   VIEW_STATUS_DETAIL = 7,
   VIEW_CLIMATE_MODES = 9,
   VIEW_MUSIC_OPTIONS = 10,
+  VIEW_QUICK = 14,       // quick settings (swipe down on the clock)
+  VIEW_PLANE = 15,       // what's-that-plane
 };
 
 // Special `cur_slot` values.

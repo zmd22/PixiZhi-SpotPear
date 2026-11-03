@@ -983,6 +983,21 @@ blueprint:
           default: []
           selector:
             action: {}
+    plane_section:
+      name: What's that plane
+      description: >-
+        Sends planes from the What's-that-plane integration to the ball. Turn on
+        "Plane Spotting" and set "Home Airport" in the device settings to show them.
+      icon: mdi:airplane
+      collapsed: true
+      input:
+        plane_sensor:
+          name: Visible flights sensor
+          description: The sensor created by the What's-that-plane integration. Leave the default if you don't use it.
+          default: sensor.visible_flights
+          selector:
+            entity:
+              domain: sensor
     device_name:
       name: ESPHome device name
       description: The name from the firmware (name - substitution), dashes replaced by underscores.
@@ -1009,6 +1024,7 @@ variables:
   standby_player: !input standby_player
   weather_ent: !input weather
   node: !input device_name
+  plane_sensor: !input plane_sensor
   ha_url: !input ha_url
   batt_min: !input battery_threshold
   status_slots:
@@ -1107,6 +1123,9 @@ variables:
 
 triggers:
   - trigger: state
+    entity_id: !input plane_sensor
+    id: planes
+  - trigger: state
     entity_id: !input status_1_entity
     id: statuses
   - trigger: state
@@ -1168,6 +1187,21 @@ triggers:
     id: refresh
 
 actions:
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'planes' }}"
+    then:
+      - variables:
+          flights: "{{ state_attr(plane_sensor, 'flights') or [] }}"
+      - action: "esphome.{{ node }}_set_planes"
+        data:
+          models: "{{ flights | map(attribute='aircraft_model') | map('default', '', true) | map('string') | list }}"
+          callsigns: "{{ flights | map(attribute='callsign') | map('default', '', true) | map('string') | list }}"
+          airlines: "{{ flights | map(attribute='airline_name') | map('default', '', true) | map('string') | list }}"
+          origins: "{{ flights | map(attribute='origin_airport_code') | map('default', '', true) | map('string') | list }}"
+          destinations: "{{ flights | map(attribute='destination_airport_code') | map('default', '', true) | map('string') | list }}"
+          registrations: "{{ flights | map(attribute='aircraft_registration') | map('default', '', true) | map('string') | list }}"
+      - stop: Planes sent
   - if:
       - condition: template
         value_template: "{{ trigger.id == 'status_tap' }}"

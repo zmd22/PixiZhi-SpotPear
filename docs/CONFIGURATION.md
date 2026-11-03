@@ -131,3 +131,31 @@ pulses the LED red and shows a full-screen **STOP** button. Everything runs on t
 device, so STOP works even if Home Assistant or the network is down. It stops on
 its own after **Siren Max Duration** (default 120 s); afterwards the previous
 volume is restored and the LED returns to its notification colour, or switches off.
+
+## Theme
+
+**Theme Color** picks one of 20 saturated accent colours for values, icons and
+rings. Text stays white/grey and status colours stay fixed (green battery and
+connection, red alarms). **Artwork Style** chooses how Sendspin album art is
+shown on the player screen: LED dots (default) or the full image. Artwork is
+shown when the player screen's current title matches the track the ball is
+playing through Sendspin.
+
+## Quick settings
+
+Swipe down on the clock. Tiles (tap to change): brightness (25/50/75/100 %;
+night brightness while night mode is active), ball volume (steps of 20 %),
+night mode, Do Not Disturb, audio output (speaker/USB DAC) and the timer.
+Swipe up to close.
+
+## What's that plane
+
+Requires the What's-that-plane custom integration. In the screens blueprint,
+check the **Visible flights sensor** (default `sensor.visible_flights`). On the
+device, turn on **Plane Spotting** and set **Home Airport** (IATA code, default
+`FRA`). Each plane that newly enters the view is shown for 15 seconds; several
+new planes are shown one after another, then the ball returns to the previous
+screen. Departures from the home airport get a takeoff icon, all others a
+landing icon. Tap or swipe to dismiss. The integration provides no flight
+number, so the callsign is shown as the flight code and the registration on
+the bottom line.
