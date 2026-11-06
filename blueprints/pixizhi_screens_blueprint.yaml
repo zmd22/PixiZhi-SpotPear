@@ -7,6 +7,7 @@ blueprint:
     Needs "Allow the device to perform Home Assistant actions" turned on in the
     PixiZhi SpotPear's ESPHome device settings.
   domain: automation
+  source_url: https://raw.githubusercontent.com/zmd22/PixiZhi-SpotPear/main/blueprints/pixizhi_screens_blueprint.yaml
   author: PixiZhi SpotPear contributors
   input:
     control_interface:

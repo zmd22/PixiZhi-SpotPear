@@ -1,6 +1,6 @@
 # PixiZhi SpotPear
 
-**1.1.0 · ESPHome firmware and Home Assistant blueprints for the Spotpear Ball v2**
+**1.1.3 · ESPHome firmware and Home Assistant blueprints for the Spotpear Ball v2**
 
 A bold pixel interface for a small round desktop display: clock, home controls,
 music, thermostats, status, notifications, timer, and four quick actions.
@@ -61,8 +61,13 @@ connection. A higher-power DAC or a different board may need additional hardware
    **Settings → Devices & services**, add the discovered **PixiZhi SpotPear** and
    enable **Allow the device to perform Home Assistant actions**. Home Assistant
    creates a unique API encryption key for the device during this step.
-5. Import the three YAMLs in `blueprints/` and create an automation from each one
-   you need, with **ESPHome device name** `pixizhi`.
+5. Import the blueprints by URL (buttons below) and create an automation from each
+   one you need, with **ESPHome device name** `pixizhi`:
+   - [Screens and controls](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fzmd22%2FPixiZhi-SpotPear%2Fmain%2Fblueprints%2Fpixizhi_screens_blueprint.yaml)
+   - [Display notifications](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fzmd22%2FPixiZhi-SpotPear%2Fmain%2Fblueprints%2Fpixizhi_notify_blueprint.yaml)
+   - [LED notifications](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fzmd22%2FPixiZhi-SpotPear%2Fmain%2Fblueprints%2Fpixizhi_led_notifications.yaml)
+   Imported this way, a blueprint updates with **Settings → Automations & scenes →
+   Blueprints → ⋮ → Re-import blueprint**; your automations keep their settings.
 
 **Updates:** new releases appear as a **Firmware** update in Home Assistant.
 Click Install; the ball downloads the image from GitHub over verified HTTPS and
