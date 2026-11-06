@@ -84,6 +84,18 @@ blueprint:
         entity:
           filter:
             - domain: media_player
+    banner_players:
+      name: Now playing banner players (most important first)
+      description: >-
+        The song-change banner follows the first of these that is playing. Leave
+        empty to use the standby music player. The ball's own Sendspin stream is
+        used when none of them plays.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - domain: media_player
     weather:
       name: Weather (standby screen)
       selector:
@@ -703,7 +715,7 @@ blueprint:
             action: {}
         long_press_action:
           name: Standby long-press action
-          description: What happens when you hold your finger on the standby screen (e.g. activate a scene).
+          description: Runs when you hold your finger on the clock and the device's Standby Long-press setting is "HA action".
           default: []
           selector:
             action: {}
@@ -717,17 +729,17 @@ blueprint:
           max: 50
           unit_of_measurement: "%"
     pizza_section:
-      name: Pizza screen (4 buttons)
-      icon: mdi:pizza
+      name: Radial menu actions 1-4 (long-press the clock)
+      icon: mdi:chart-donut
       collapsed: true
       input:
         pizza_1_label:
-          name: Slice 1 (top) - label
+          name: Action 1 (top) - label
           default: "Movie"
           selector:
             text: {}
         pizza_1_icon:
-          name: Slice 1 (top) - icon
+          name: Action 1 (top) - icon
           default: movie
           selector:
             select:
@@ -743,23 +755,47 @@ blueprint:
                 - tv
                 - music
                 - lock
+                - unlock
                 - garage
+                - door
+                - window
+                - blinds
                 - home
+                - away
                 - fire
+                - heating
+                - thermo
+                - snow
                 - coffee
+                - washer
+                - water
+                - plug
+                - bolt
+                - camera
+                - shield
+                - bell
+                - car
+                - plant
+                - speaker
+                - phones
+                - sun
+                - scene
                 - star
+                - timer
+                - package
+                - mail
         pizza_1_action:
-          name: Slice 1 (top) - action
+          name: Action 1 (top) - action
           default: []
           selector:
             action: {}
         pizza_2_label:
-          name: Slice 2 (right) - label
+          name: Action 2 (right) - label
           default: "Night"
           selector:
             text: {}
         pizza_2_icon:
-          name: Slice 2 (right) - icon
+          name: Action 2 (right) - icon
           default: night
           selector:
             select:
@@ -775,23 +811,47 @@ blueprint:
                 - tv
                 - music
                 - lock
+                - unlock
                 - garage
+                - door
+                - window
+                - blinds
                 - home
+                - away
                 - fire
+                - heating
+                - thermo
+                - snow
                 - coffee
+                - washer
+                - water
+                - plug
+                - bolt
+                - camera
+                - shield
+                - bell
+                - car
+                - plant
+                - speaker
+                - phones
+                - sun
+                - scene
                 - star
+                - timer
+                - package
+                - mail
         pizza_2_action:
-          name: Slice 2 (right) - action
+          name: Action 2 (right) - action
           default: []
           selector:
             action: {}
         pizza_3_label:
-          name: Slice 3 (bottom) - label
+          name: Action 3 (bottom) - label
           default: "All off"
           selector:
             text: {}
         pizza_3_icon:
-          name: Slice 3 (bottom) - icon
+          name: Action 3 (bottom) - icon
           default: power
           selector:
             select:
@@ -807,23 +867,47 @@ blueprint:
                 - tv
                 - music
                 - lock
+                - unlock
                 - garage
+                - door
+                - window
+                - blinds
                 - home
+                - away
                 - fire
+                - heating
+                - thermo
+                - snow
                 - coffee
+                - washer
+                - water
+                - plug
+                - bolt
+                - camera
+                - shield
+                - bell
+                - car
+                - plant
+                - speaker
+                - phones
+                - sun
+                - scene
                 - star
+                - timer
+                - package
+                - mail
         pizza_3_action:
-          name: Slice 3 (bottom) - action
+          name: Action 3 (bottom) - action
           default: []
           selector:
             action: {}
         pizza_4_label:
-          name: Slice 4 (left) - label
+          name: Action 4 (left) - label
           default: "Vacuum"
           selector:
             text: {}
         pizza_4_icon:
-          name: Slice 4 (left) - icon
+          name: Action 4 (left) - icon
           default: vacuum
           selector:
             select:
@@ -839,29 +923,53 @@ blueprint:
                 - tv
                 - music
                 - lock
+                - unlock
                 - garage
+                - door
+                - window
+                - blinds
                 - home
+                - away
                 - fire
+                - heating
+                - thermo
+                - snow
                 - coffee
+                - washer
+                - water
+                - plug
+                - bolt
+                - camera
+                - shield
+                - bell
+                - car
+                - plant
+                - speaker
+                - phones
+                - sun
+                - scene
                 - star
+                - timer
+                - package
+                - mail
         pizza_4_action:
-          name: Slice 4 (left) - action
+          name: Action 4 (left) - action
           default: []
           selector:
             action: {}
     pizza_page2_section:
-      name: Pizza screen page 2 (swipe left on the pizza screen)
-      description: Leave a label empty to hide that slice. Page 2 appears only when at least one label is set.
-      icon: mdi:pizza
+      name: Radial menu actions 5-8 (diagonals)
+      description: Leave a label empty to hide that action.
+      icon: mdi:chart-donut
       collapsed: true
       input:
         pizza_5_label:
-          name: Slice 5 (top) - label
+          name: Action 5 (top-right) - label
           default: ""
           selector:
             text: {}
         pizza_5_icon:
-          name: Slice 5 (top) - icon
+          name: Action 5 (top-right) - icon
           default: star
           selector:
             select:
@@ -877,23 +985,47 @@ blueprint:
                 - tv
                 - music
                 - lock
+                - unlock
                 - garage
+                - door
+                - window
+                - blinds
                 - home
+                - away
                 - fire
+                - heating
+                - thermo
+                - snow
                 - coffee
+                - washer
+                - water
+                - plug
+                - bolt
+                - camera
+                - shield
+                - bell
+                - car
+                - plant
+                - speaker
+                - phones
+                - sun
+                - scene
                 - star
+                - timer
+                - package
+                - mail
         pizza_5_action:
-          name: Slice 5 (top) - action
+          name: Action 5 (top-right) - action
           default: []
           selector:
             action: {}
         pizza_6_label:
-          name: Slice 6 (right) - label
+          name: Action 6 (bottom-right) - label
           default: ""
           selector:
             text: {}
         pizza_6_icon:
-          name: Slice 6 (right) - icon
+          name: Action 6 (bottom-right) - icon
           default: star
           selector:
             select:
@@ -909,23 +1041,47 @@ blueprint:
                 - tv
                 - music
                 - lock
+                - unlock
                 - garage
+                - door
+                - window
+                - blinds
                 - home
+                - away
                 - fire
+                - heating
+                - thermo
+                - snow
                 - coffee
+                - washer
+                - water
+                - plug
+                - bolt
+                - camera
+                - shield
+                - bell
+                - car
+                - plant
+                - speaker
+                - phones
+                - sun
+                - scene
                 - star
+                - timer
+                - package
+                - mail
         pizza_6_action:
-          name: Slice 6 (right) - action
+          name: Action 6 (bottom-right) - action
           default: []
           selector:
             action: {}
         pizza_7_label:
-          name: Slice 7 (bottom) - label
+          name: Action 7 (bottom-left) - label
           default: ""
           selector:
             text: {}
         pizza_7_icon:
-          name: Slice 7 (bottom) - icon
+          name: Action 7 (bottom-left) - icon
           default: star
           selector:
             select:
@@ -941,23 +1097,47 @@ blueprint:
                 - tv
                 - music
                 - lock
+                - unlock
                 - garage
+                - door
+                - window
+                - blinds
                 - home
+                - away
                 - fire
+                - heating
+                - thermo
+                - snow
                 - coffee
+                - washer
+                - water
+                - plug
+                - bolt
+                - camera
+                - shield
+                - bell
+                - car
+                - plant
+                - speaker
+                - phones
+                - sun
+                - scene
                 - star
+                - timer
+                - package
+                - mail
         pizza_7_action:
-          name: Slice 7 (bottom) - action
+          name: Action 7 (bottom-left) - action
           default: []
           selector:
             action: {}
         pizza_8_label:
-          name: Slice 8 (left) - label
+          name: Action 8 (top-left) - label
           default: ""
           selector:
             text: {}
         pizza_8_icon:
-          name: Slice 8 (left) - icon
+          name: Action 8 (top-left) - icon
           default: star
           selector:
             select:
@@ -973,16 +1153,57 @@ blueprint:
                 - tv
                 - music
                 - lock
+                - unlock
                 - garage
+                - door
+                - window
+                - blinds
                 - home
+                - away
                 - fire
+                - heating
+                - thermo
+                - snow
                 - coffee
+                - washer
+                - water
+                - plug
+                - bolt
+                - camera
+                - shield
+                - bell
+                - car
+                - plant
+                - speaker
+                - phones
+                - sun
+                - scene
                 - star
+                - timer
+                - package
+                - mail
         pizza_8_action:
-          name: Slice 8 (left) - action
+          name: Action 8 (top-left) - action
           default: []
           selector:
             action: {}
+    ambient_section:
+      name: Auto brightness
+      description: >-
+        Sends a light sensor's reading to the ball. Turn on "Auto Brightness" in the
+        device settings and tune its minimum, maximum and full-brightness lux there.
+      icon: mdi:brightness-auto
+      collapsed: true
+      input:
+        ambient_light:
+          name: Light sensor
+          description: Any sensor reporting illuminance (lx). Leave empty to disable.
+          default: []
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                  device_class: illuminance
     plane_section:
       name: What's that plane
       description: >-
@@ -1022,9 +1243,11 @@ variables:
   standby_temperature: !input standby_temperature
   standby_humidity: !input standby_humidity
   standby_player: !input standby_player
+  banner_players: !input banner_players
   weather_ent: !input weather
   node: !input device_name
   plane_sensor: !input plane_sensor
+  ambient_light: !input ambient_light
   ha_url: !input ha_url
   batt_min: !input battery_threshold
   status_slots:
@@ -1123,6 +1346,12 @@ variables:
 
 triggers:
   - trigger: state
+    entity_id: !input banner_players
+    id: banner
+  - trigger: state
+    entity_id: !input ambient_light
+    id: ambient
+  - trigger: state
     entity_id: !input plane_sensor
     id: planes
   - trigger: state
@@ -1155,6 +1384,9 @@ triggers:
   - trigger: time_pattern
     seconds: "/15"
     id: statuses
+  - trigger: time_pattern
+    minutes: "/15"
+    id: forecast
   - trigger: event
     event_type: esphome.pixizhi_gesture
     id: gesture
@@ -1187,6 +1419,48 @@ triggers:
     id: refresh
 
 actions:
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id in ['banner', 'refresh'] }}"
+    then:
+      - variables:
+          banner_list: "{{ banner_players if banner_players is list else ([banner_players] if banner_players else []) }}"
+          banner_eid: >-
+            {% set ns = namespace(p='') %}
+            {% for e in banner_list %}
+              {% if ns.p == '' and is_state(e, 'playing') and state_attr(e, 'media_title') %}{% set ns.p = e %}{% endif %}
+            {% endfor %}
+            {{ ns.p }}
+      - action: "esphome.{{ node }}_set_banner_source"
+        data:
+          enabled: "{{ banner_list | count > 0 }}"
+          name: "{{ state_attr(banner_eid, 'friendly_name') if banner_eid else '' }}"
+          title: "{{ state_attr(banner_eid, 'media_title') if banner_eid else '' }}"
+          artist: "{{ (state_attr(banner_eid, 'media_artist') or state_attr(banner_eid, 'media_album_name') or '') if banner_eid else '' }}"
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id == 'banner' }}"
+        then:
+          - stop: Banner source sent
+  - if:
+      - condition: template
+        value_template: >-
+          {{ trigger.id in ['ambient', 'refresh'] and ambient_light not in [none, '', []]
+             and states(ambient_light) | is_number }}
+    then:
+      - action: "esphome.{{ node }}_set_ambient_light"
+        data:
+          lux: "{{ states(ambient_light) | float }}"
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id == 'ambient' }}"
+        then:
+          - stop: Ambient light sent
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'ambient' }}"
+    then:
+      - stop: Ambient light unavailable
   - if:
       - condition: template
         value_template: "{{ trigger.id == 'planes' }}"
@@ -1371,6 +1645,34 @@ actions:
                 slice: "{{ repeat.index }}"
                 label: "{{ repeat.item.label }}"
                 icon: "{{ repeat.item.icon }}"
+  - if:
+      - condition: template
+        value_template: >-
+          {{ trigger.id in ['weather', 'refresh', 'forecast'] and weather_ent not in [none, '', []]
+             and (state_attr(weather_ent, 'supported_features') | int(0)) // 2 % 2 == 1 }}
+    then:
+      - action: weather.get_forecasts
+        continue_on_error: true
+        target:
+          entity_id: "{{ weather_ent }}"
+        data:
+          type: hourly
+        response_variable: hourly
+      - variables:
+          hours: >-
+            {{ ((hourly[weather_ent].forecast if hourly is defined and weather_ent in hourly else [])
+               | selectattr('datetime', 'defined') | list)[:5] }}
+      - action: "esphome.{{ node }}_set_forecast"
+        data:
+          hours: "{{ hours | map(attribute='datetime') | map('as_datetime') | map('as_local') | map(attribute='hour') | list }}"
+          temps: "{{ hours | map(attribute='temperature') | map('float', 0) | list }}"
+          conditions: "{{ hours | map(attribute='condition') | map('default', '', true) | map('string') | list }}"
+          rain: "{{ hours | map(attribute='precipitation_probability') | map('default', 0, true) | map('int', 0) | list }}"
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'forecast' }}"
+    then:
+      - stop: Forecast only
   - if:
       - condition: template
         value_template: "{{ trigger.id in ['weather', 'refresh', 'statuses'] }}"

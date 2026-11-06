@@ -235,7 +235,7 @@ struct Icon {
   const char *rows[13];
 };
 static const Icon ICONS[] = {
-    // 11x11 menu and plane icons
+    // 11x11 menu icons
     {"big_light", 11, 11, {"...XXXXX...", "..XXXXXXX..", ".XXXXXXXXX.", ".XXXXXXXXX.", ".XXXXXXXXX.", "..XXXXXXX..",
                           "...XXXXX...", "...........", "...XXXXX...", "....XXX....", "..........."}},
     {"big_music", 11, 11, {"....XXXXXXX", "....XXXXXXX", "....X.....X", "....X.....X", "....X.....X", "....X.....X",
@@ -244,10 +244,6 @@ static const Icon ICONS[] = {
                          "..XXX.XXXX.", "..XX...XXX.", "..XX...XX..", "...XX.XX...", "....XXX...."}},
     {"big_more", 11, 11, {"XXXX...XXXX", "XXXX...XXXX", "XXXX...XXXX", "XXXX...XXXX", "...........", "...........",
                          "...........", "XXXX...XXXX", "XXXX...XXXX", "XXXX...XXXX", "XXXX...XXXX"}},
-    {"takeoff", 12, 13, {"..........XX", ".........XXX", "...X....XXX.", "...XX..XXX..", "....XXXXX...", ".....XXXXXX.",
-                        "....XXXX.XX.", "X..XXX......", "XXXXX.......", ".XXX........", "..X.........", "............", "XXXXXXXXXXXX"}},
-    {"landing", 12, 13, {"XX..........", "XXX.........", ".XXX....X...", "..XXX..XX...", "...XXXXX....", ".XXXXXX.....",
-                        ".XX.XXXX....", "......XXX..X", ".......XXXXX", "........XXX.", ".........X..", "............", "XXXXXXXXXXXX"}},
     // 9x9 icons (names match those sent by the blueprints)
     {"light", 9, 9, {"..XXXXX..", ".XXXXXXX.", "XXXXXXXXX", "XXXXXXXXX", ".XXXXXXX.", "..XXXXX..", "...XXX...", "...XXX...", "....X...."}},
     {"music", 9, 9, {"...XXXXXX", "...XXXXXX", "...X....X", "...X....X", "...X....X", ".XXX..XXX", "XXXX.XXXX", "XXXX.XXXX", ".XX...XX."}},
@@ -290,6 +286,19 @@ static const Icon ICONS[] = {
     {"phones", 9, 9, {"..XXXXX..", ".X.....X.", "X.......X", "X.......X", "XXX...XXX", "XXX...XXX", "XXX...XXX", "XXX...XXX", "........."}},
     {"hourglass", 9, 9, {"XXXXXXXXX", ".X.....X.", "..X...X..", "...XXX...", "....X....", "...X.X...", "..X.XXX..", ".XXXXXXX.", "XXXXXXXXX"}},
     {"heating", 9, 9, {"X.X.X.X.X", "X.X.X.X.X", "XXXXXXXXX", "X.X.X.X.X", "X.X.X.X.X", "X.X.X.X.X", "XXXXXXXXX", "X.X.X.X.X", "X.......X"}},
+    // added in 1.1.3 for the radial menu
+    {"unlock", 9, 9, {"..XXXXX..", ".X.....X.", ".X.......", "XXXXXXXXX", "XXXXXXXXX", "XXXX.XXXX", "XXXX.XXXX", "XXXXXXXXX", "XXXXXXXXX"}},
+    {"blinds", 9, 9, {"XXXXXXXXX", "X.......X", "XXXXXXXXX", "X.......X", "XXXXXXXXX", "X.......X", "XXXXXXXXX", "....X....", "....X...."}},
+    {"camera", 9, 9, {".........", "..XXX....", "XXXXXXXXX", "X..XXX..X", "X.X...X.X", "X.X...X.X", "X..XXX..X", "XXXXXXXXX", "........."}},
+    {"car", 9, 9, {".........", "..XXXXX..", ".X.....X.", "X.......X", "XXXXXXXXX", "XX.XXX.XX", "XXXXXXXXX", ".XX...XX.", "........."}},
+    {"plug", 9, 9, {"..X...X..", "..X...X..", ".XXXXXXX.", ".XXXXXXX.", ".XXXXXXX.", "..XXXXX..", "...XXX...", "....X....", "....X...."}},
+    {"thermo", 9, 9, {"...XXX...", "...X.X...", "...X.X...", "...XXX...", "...XXX...", "..XXXXX..", ".XXXXXXX.", ".XXXXXXX.", "..XXXXX.."}},
+    {"snow", 9, 9, {"....X....", ".X..X..X.", "..X.X.X..", "...XXX...", "XXXXXXXXX", "...XXX...", "..X.X.X..", ".X..X..X.", "....X...."}},
+    {"shield", 9, 9, {"XXXXXXXXX", "X.......X", "X...X...X", "X..XXX..X", ".X.XXX.X.", ".X..X..X.", "..X...X..", "...X.X...", "....X...."}},
+    {"bolt", 9, 9, {"....XXX..", "...XXX...", "..XXX....", ".XXXXXXX.", "....XXX..", "...XXX...", "..XXX....", ".XX......", ".X......."}},
+    {"plant", 9, 9, {"...X.X...", "..XX.XX..", ".XXX.XXX.", "..XX.XX..", "....X....", ".XXXXXXX.", ".XXXXXXX.", "..XXXXX..", "..XXXXX.."}},
+    {"scene", 9, 9, {"......X..", ".....XXX.", "......X..", ".....X...", "....X....", "...X.....", "..X......", ".X.......", "X........"}},
+    {"away", 9, 9, {"XXXXX....", "X...X....", "X...X..X.", "X..XXXXXX", "X...X..X.", "X...X....", "X...X....", "X...X....", "XXXXX...."}},
     {"wifi", 9, 7, {".XXXXXXX.", "X.......X", "..XXXXX..", ".X.....X.", "...XXX...", "..X...X..", "....X...."}},
     {"bat_h", 9, 5, {"XXXXXXXX.", "X......XX", "X......XX", "X......XX", "XXXXXXXX."}},
     {"chev_up", 7, 4, {"...X...", "..XXX..", ".XX.XX.", "XX...XX"}},
@@ -346,7 +355,7 @@ inline void dial(Canvas &cv, float fraction, Rgb on) {
 // ---------------------------------------------------------------- state
 enum Screen {
   S_CLOCK = 0, S_MENU = 1, S_SLOT = 2, S_HOME = 3, S_HEAT_LIST = 4, S_LIST = 5, S_MORE = 6, S_STATUS = 7,
-  S_MODES = 9, S_MUSIC_OPT = 10, S_ALERTS = 11, S_TIMER = 12, S_PIZZA = 13, S_QUICK = 14, S_PLANE = 15,
+  S_MODES = 9, S_MUSIC_OPT = 10, S_ALERTS = 11, S_TIMER = 12, S_QUICK = 14, S_PLANE = 15, S_FORECAST = 16, S_NOW_PLAYING = 17, S_RADIAL = 18,
 };
 
 struct SlotView {
@@ -381,8 +390,15 @@ struct UiState {
   float weather_temp = 0;
   int weather_frame = 0;
   int status_row = -1;  // status shown instead of weather on the clock
+  // hourly forecast (next hours, from the blueprint)
+  int fc_n = 0;
+  int fc_hour[5] = {};
+  float fc_temp[5] = {};
+  int fc_rain[5] = {};  // precipitation probability, %
+  std::string fc_cond[5];
   std::string desk_temp, desk_rh;
   bool music_line = false;
+  std::string music_player;  // player name on the song-change banner
   std::string music_title, music_artist;
   int alert_count = 0;
   float battery = NAN;
@@ -408,9 +424,9 @@ struct UiState {
   int timer_left = 300, timer_set_min = 5;
   bool timer_running = false, timer_done = false;
 
-  // pizza
-  std::string pizza_labels[12], pizza_keys[12];
-  int pizza_page = 0, pizza_pages = 1, pizza_sel = -1;
+  // radial action menu
+  std::string radial_labels[8], radial_keys[8];
+  int radial_sel = -1;
 
   // quick settings
   int q_brightness = 100, q_volume = 50;
@@ -445,6 +461,14 @@ inline void footer(Canvas &cv, const UiState &s) { icon(cv, "home", 120, 210, 2,
 
 inline void top_title(Canvas &cv, const UiState &s, const std::string &t) { text(cv, t, 120, 24, 3, s.accent, 170); }
 
+// HA weather condition -> 11x9 weather icon name.
+inline const char *weather_icon(const std::string &c) {
+  return c == "sunny" ? "w_sun" : c == "clear-night" ? "w_moon" : c == "partlycloudy" ? "w_part"
+         : (c == "rainy" || c == "pouring") ? "w_rain" : (c == "lightning" || c == "lightning-rainy") ? "w_bolt"
+         : (c == "snowy" || c == "snowy-rainy" || c == "hail") ? "w_snow" : c == "fog" ? "w_fog"
+         : (c == "windy" || c == "windy-variant") ? "w_wind" : "w_cloud";
+}
+
 inline void draw_clock(Canvas &cv, const UiState &s) {
   const Rgb a = s.accent, off = scale(s.accent, 0.16f);
   if (s.battery_ring && !s.charging && !std::isnan(s.battery))
@@ -458,10 +482,7 @@ inline void draw_clock(Canvas &cv, const UiState &s) {
     text(cv, st.label, 136, 46, 3, WHITE, 140, int32_t(s.scroll_ms));
   } else if (s.weather_ok) {
     const std::string &c = s.weather_cond;
-    const char *k = c == "sunny" ? "w_sun" : c == "clear-night" ? "w_moon" : c == "partlycloudy" ? "w_part"
-                    : (c == "rainy" || c == "pouring") ? "w_rain" : (c == "lightning" || c == "lightning-rainy") ? "w_bolt"
-                    : (c == "snowy" || c == "snowy-rainy" || c == "hail") ? "w_snow" : c == "fog" ? "w_fog"
-                    : (c == "windy" || c == "windy-variant") ? "w_wind" : "w_cloud";
+    const char *k = weather_icon(c);
     std::string t = fmt(s.weather_temp, 0) + "^";
     const float ip = 3.2f, iw = 11 * ip;  // 11x9 icon, centred on the 3x text
     float tw = text_width(t, 3), total = iw + 8 + tw;
@@ -516,7 +537,7 @@ inline void draw_menu(Canvas &cv, const UiState &s) {
 inline void draw_more(Canvas &cv, const UiState &s) {
   top_title(cv, s, "MORE");
   struct It { const char *ic, *label; float cx, y; };
-  const It items[] = {{"bell", "ALERTS", 76, 56}, {"timer", "TIMER", 164, 56}, {"star", "ACTIONS", 76, 122}, {"info", "STATUS", 164, 122}};
+  const It items[] = {{"bell", "ALERTS", 76, 56}, {"timer", "TIMER", 164, 56}, {"scene", "ACTIONS", 76, 122}, {"info", "STATUS", 164, 122}};
   for (const auto &i : items) {
     icon(cv, i.ic, i.cx, i.y, 4, s.accent);
     text(cv, i.label, i.cx, i.y + 42, 2, WHITE, 90);
@@ -653,6 +674,48 @@ inline void draw_artwork(Canvas &cv, const UiState &s, int cx, int y, int size) 
   }
 }
 
+// Sample the RGB565 artwork at normalised coordinates (0..1).
+inline Rgb art_at(const UiState &s, float u, float v) {
+  const int x = std::min(s.art_w - 1, std::max(0, int(u * s.art_w))), y = std::min(s.art_h - 1, std::max(0, int(v * s.art_h)));
+  uint16_t p;
+  memcpy(&p, s.art + (size_t(y) * s.art_w + x) * 2, 2);
+  return Rgb{uint8_t((p >> 11) << 3), uint8_t(((p >> 5) & 63) << 2), uint8_t((p & 31) << 3)};
+}
+
+// Artwork across the upper half, fading out at the bottom: the middle band of
+// the cover, either smooth or as LED dots (Artwork Style). `dim` darkens it
+// (paused).
+inline void art_hero(Canvas &cv, const UiState &s, float dim = 1.0f) {
+  if (s.art_led) {
+    const float p = 7.0f;
+    for (int j = 0; j < 17; j++)
+      for (int i = 0; i < 34; i++) {
+        const float x = i * p + p / 2 + 1, y = j * p + p / 2, dx = x - 120, dy = y - 120;
+        if (dx * dx + dy * dy > 116 * 116) continue;
+        const float fade = j < 13 ? 1.0f : 1.0f - (j - 12) * 0.2f;
+        led(cv, x, y, p, scale(art_at(s, x / 240, 0.2f + y / 240), fade * dim), false);
+      }
+  } else {
+    for (int y = 0; y < 124; y++)
+      for (int x = 0; x < 240; x++) {
+        const float fade = y < 96 ? 1.0f : 1.0f - (y - 96) / 28.0f;
+        cv.blit_rgb(x, y, scale(art_at(s, x / 240.0f, 0.2f + y / 240.0f), fade * dim));
+      }
+  }
+}
+
+// Shared by the song-change banner and the player screen: artwork (or a note),
+// scrolling title and artist, and the player name small at the bottom.
+inline void music_hero(Canvas &cv, const UiState &s, const std::string &title, const std::string &artist,
+                       const std::string &player, float dim = 1.0f) {
+  const Rgb a = s.accent;
+  if (s.art != nullptr && s.art_w > 0) art_hero(cv, s, dim);
+  else icon(cv, "music", 120, 40, 6, scale(a, dim));
+  text(cv, title, 120, 130, 3, WHITE, 172, int32_t(s.scroll_ms));
+  text(cv, artist, 120, 157, 2, a, 168, int32_t(s.scroll_ms));
+  text(cv, player, 120, 197, 1.6f, GREY, 120);
+}
+
 inline void draw_slot(Canvas &cv, const UiState &s) {
   if (s.cur_slot < 0 || s.cur_slot >= 6) return;
   const auto &q = s.slots[s.cur_slot];
@@ -667,25 +730,13 @@ inline void draw_slot(Canvas &cv, const UiState &s) {
     icon(cv, "power", 90, 162, 4, on ? a : WHITE);
     if (q.color || q.white) icon(cv, "palette", 150, 162, 4, a);
   } else if (q.music()) {
+    // Same layout as the song-change banner plus the volume/progress ring. The
+    // lower half is the control surface: swipe left/right for previous/next,
+    // double-tap to play/pause. The rim sets the volume.
     float vol = s.dragging ? s.dial_value : q.pending == 3 ? q.expected : q.vol * 100;
     bool playing = q.pending == 5 ? q.expected > 0 : q.state == "playing";
-    bool has_art = s.art != nullptr;
-    if (has_art) {
-      edge_ring(cv, s.progress < 0 ? vol / 100 : s.progress, a, 60, 115, 3.6f);
-      draw_artwork(cv, s, 120, 26, 92);
-      text(cv, q.title.empty() ? q.state : q.title, 120, 126, 2, WHITE, 176, int32_t(s.scroll_ms));
-      text(cv, q.artist, 120, 146, 2, GREY, 168, int32_t(s.scroll_ms));
-    } else {
-      dial(cv, vol / 100, a);
-      text(cv, q.label, 120, 40, 2, GREY, 160);
-      text(cv, q.title.empty() ? q.state : q.title, 120, 74, 3, WHITE, 180, int32_t(s.scroll_ms));
-      text(cv, q.artist, 120, 104, 2, a, 176, int32_t(s.scroll_ms));
-    }
-    const int f = q.features;
-    icon(cv, "prev", 68, 172, 3, q.available && (f & 16) ? WHITE : DIM);
-    icon(cv, playing ? "pause" : "play", 120, 168, 4, q.available && (f & (1 | 512 | 16384)) ? a : DIM);
-    icon(cv, "next", 172, 172, 3, q.available && (f & 32) ? WHITE : DIM);
-    if (!has_art) text(cv, "VOL " + fmt(vol, 0) + "%", 120, 140, 2, GREY, 160);
+    music_hero(cv, s, q.title.empty() ? q.state : q.title, q.artist, q.label, playing ? 1.0f : 0.45f);
+    edge_ring(cv, vol / 100, a, 60, 115, 3.6f);
   } else {
     float target = s.dragging ? s.dial_value : q.pending == 4 ? q.expected : q.ttarget;
     dial(cv, (target - q.tmin) / std::max(1.0f, q.tmax - q.tmin), a);
@@ -698,7 +749,7 @@ inline void draw_slot(Canvas &cv, const UiState &s) {
     text(cv, q.action == "heating" ? "HEATING" : q.state, 120, 184, 2, q.action == "heating" ? a : GREY, 150);
   }
   if (!q.available) text(cv, q.stale ? "OFFLINE" : "UNAVAILABLE", 120, 196, 2, GREY, 170);
-  footer(cv, s);
+  if (!q.music()) footer(cv, s);
 }
 
 // Word-wraps to lines of at most `cols` characters.
@@ -758,21 +809,6 @@ inline void draw_timer(Canvas &cv, const UiState &s) {
   footer(cv, s);
 }
 
-inline void draw_pizza(Canvas &cv, const UiState &s) {
-  top_title(cv, s, "ACTIONS");
-  const float xs[] = {120, 186, 120, 54}, ys[] = {52, 104, 156, 104};
-  const int base = s.pizza_page * 4;
-  for (int k = 0; k < 4; k++) {
-    if (s.pizza_labels[base + k].empty()) continue;
-    Rgb ink = k == s.pizza_sel ? WHITE : s.accent;
-    icon(cv, s.pizza_keys[base + k], xs[k], ys[k], 2.6f, ink);
-    text(cv, s.pizza_labels[base + k], xs[k], ys[k] + 28, 1.6f, ink, k == 1 || k == 3 ? 72 : 110);
-  }
-  icon(cv, "home", 120, 108, 2.4f, DIM);
-  if (s.pizza_pages > 1)
-    for (int p = 0; p < s.pizza_pages; p++) led(cv, 120 - (s.pizza_pages - 1) * 6 + p * 12, 204, 5, p == s.pizza_page ? WHITE : DIM, p == s.pizza_page);
-}
-
 inline void draw_quick(Canvas &cv, const UiState &s) {
   // status line: battery, Wi-Fi, HA link, time
   const Rgb bat = s.charging ? OK_GREEN : s.battery_low ? ALARM : OK_GREEN;
@@ -803,10 +839,24 @@ inline void draw_quick(Canvas &cv, const UiState &s) {
   }
 }
 
+// Departure-board tag: top-down jet (nose up; flipped for arrivals) plus DEPARTING / ARRIVING.
+static const char *PLANE_TOP[9] = {"....X....", "...XXX...", "...XXX...", ".XXXXXXX.", "XXXXXXXXX",
+                                   "...XXX...", "...XXX...", "..XXXXX..", ".XX.X.XX."};
+inline void draw_plane_badge(Canvas &cv, const UiState &s, Rgb a) {
+  const char *lbl = s.p_takeoff ? "DEPARTING" : "ARRIVING";
+  const float w = text_width(lbl, 2);
+  const float x = 120 - (w + 30) / 2.0f;
+  for (int r = 0; r < 9; r++) {
+    const char *row = PLANE_TOP[s.p_takeoff ? r : 8 - r];
+    for (int k = 0; k < 9; k++) if (row[k] == 'X') led(cv, x + k * 2.6f + 1.3f, 38 + r * 2.6f + 1.3f, 2.6f, a);
+  }
+  text(cv, lbl, x + 30 + w / 2.0f, 41, 2, a, 190);
+}
+
 inline void draw_plane(Canvas &cv, const UiState &s) {
   const Rgb a = s.accent;
   edge_ring(cv, s.p_remaining, a);
-  icon(cv, s.p_takeoff ? "takeoff" : "landing", 120, 22, 3.4f, a);
+  draw_plane_badge(cv, s, a);
   text(cv, s.p_model.empty() ? "UNKNOWN" : s.p_model, 120, 74, 3, a, 196, int32_t(s.scroll_ms));
   text(cv, s.p_flight.empty() ? "NO CALLSIGN" : s.p_flight, 120, 104, 3, WHITE, 196);
   text(cv, s.p_airline, 120, 134, 2, GREY, 190, int32_t(s.scroll_ms));
@@ -815,6 +865,66 @@ inline void draw_plane(Canvas &cv, const UiState &s) {
   text(cv, s.p_callsign, 120, 188, 2, GREY, 150);  // registration
   if (s.p_count > 1)
     for (int p = 0; p < s.p_count && p < 8; p++) led(cv, 120 - (std::min(s.p_count, 8) - 1) * 5 + p * 10, 210, 4, p == s.p_index ? WHITE : DIM, p == s.p_index);
+}
+
+// Next hours as LED columns: hour, icon, temperature, a bar scaled across the
+// shown range, and rain chance as blue dots (one per 20%).
+inline void draw_forecast(Canvas &cv, const UiState &s) {
+  const Rgb a = s.accent, rain = rgb(0x3AA0FF);
+  text(cv, "NEXT HOURS", 120, 26, 2, GREY);
+  const int n = std::min(s.fc_n, 5);
+  if (n == 0) { text(cv, "NO FORECAST", 120, 112, 3, GREY, 190); return; }
+  float lo = s.fc_temp[0], hi = s.fc_temp[0];
+  for (int i = 1; i < n; i++) { lo = std::min(lo, s.fc_temp[i]); hi = std::max(hi, s.fc_temp[i]); }
+  const float dx = 34, x0 = 120 - (n - 1) * dx / 2;
+  for (int i = 0; i < n; i++) {
+    const float x = x0 + i * dx;
+    char h[4];
+    snprintf(h, sizeof(h), "%02d", s.fc_hour[i] % 24);
+    text(cv, h, x, 46, 2, i == 0 ? WHITE : GREY);
+    icon(cv, weather_icon(s.fc_cond[i]), x, 64, 2.4f, a);
+    text(cv, fmt(s.fc_temp[i], 0), x, 92, 2, WHITE);
+    // temperature bar: 2..8 dots, bottom-aligned
+    const int lit = hi - lo < 0.5f ? 5 : 2 + int(roundf((s.fc_temp[i] - lo) / (hi - lo) * 6));
+    for (int k = 0; k < 8; k++) led(cv, x, 158 - k * 6.2f, 4.6f, k < lit ? a : GHOST, k < lit);
+    const int drops = (s.fc_rain[i] + 10) / 20;
+    for (int k = 0; k < 5; k++) led(cv, x, 172 + k * 5.4f, 3.6f, k < drops ? rain : GHOST, k < drops);
+  }
+}
+
+// Shown for 10 s when the song changes.
+inline void draw_now_playing(Canvas &cv, const UiState &s) {
+  music_hero(cv, s, s.music_title, s.music_artist, s.music_player);
+}
+
+// Radial action menu over the clock: up to 8 actions on a ring, clockwise from
+// the top. The selected one is white with its edge segment lit; its label shows
+// in the middle.
+inline void draw_radial(Canvas &cv, const UiState &s) {
+  const Rgb a = s.accent;
+  int count = 0;
+  for (int k = 0; k < 8; k++) if (!s.radial_labels[k].empty()) count++;
+  for (int k = 0; k < 60; k++) {
+    const float ang = (-90.0f + k * 6.0f) * 0.0174532925f;
+    const int slice = ((k + 4) % 60) / 7.5f;  // 7.5 LEDs per slice, centred on its icon
+    const bool on = slice == s.radial_sel && !s.radial_labels[slice].empty();
+    led(cv, 120 + cosf(ang) * 114, 120 + sinf(ang) * 114, 4.2f, on ? a : GHOST, on);
+  }
+  for (int k = 0; k < 8; k++) {
+    if (s.radial_labels[k].empty()) continue;
+    const float ang = (-90.0f + k * 45.0f) * 0.0174532925f;
+    const bool sel = k == s.radial_sel;
+    const float p = sel ? 3.2f : 2.6f;
+    icon(cv, s.radial_keys[k], 120 + cosf(ang) * 80, 120 + sinf(ang) * 80 - 4.5f * p, p, sel ? WHITE : a);
+  }
+  if (count == 0) {
+    text(cv, "NO ACTIONS", 120, 104, 2, GREY, 120);
+    text(cv, "SET IN BLUEPRINT", 120, 124, 1.6f, DIM, 120);
+  } else if (s.radial_sel >= 0 && !s.radial_labels[s.radial_sel].empty()) {
+    text(cv, s.radial_labels[s.radial_sel], 120, 112, 2, WHITE, 104);
+  } else {
+    led(cv, 120, 120, 6, DIM, false);
+  }
 }
 
 // Draws the whole frame for the current screen.
@@ -857,11 +967,13 @@ inline void draw_frame(Canvas &cv, UiState &s) {
     }
     case S_ALERTS: draw_alerts(cv, s); break;
     case S_TIMER: draw_timer(cv, s); break;
-    case S_PIZZA: draw_pizza(cv, s); break;
     case S_QUICK: draw_quick(cv, s); break;
     case S_PLANE: draw_plane(cv, s); break;
+    case S_FORECAST: draw_forecast(cv, s); break;
+    case S_NOW_PLAYING: draw_now_playing(cv, s); break;
+    case S_RADIAL: draw_radial(cv, s); break;
   }
-  if (s.screen != S_CLOCK && s.screen != S_QUICK && s.screen != S_PLANE && !s.ha_online)
+  if (s.screen != S_CLOCK && s.screen != S_QUICK && s.screen != S_PLANE && s.screen != S_NOW_PLAYING && !s.ha_online)
     text(cv, offline_text(s), 120, 15, 1.6f, GREY, 110);
   if (!s.message.empty()) {
     fill_rect(cv, 30, 194, 180, 16, BLACK);

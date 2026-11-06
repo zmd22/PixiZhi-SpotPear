@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.1.3
+
+Re-import the screens blueprint after updating: auto-brightness, the forecast,
+the banner players and the radial menu all need it.
+
+- Radial action menu replaces the pizza screen: hold the middle of the clock,
+  slide to one of up to eight actions and let go (or let go in the middle and
+  tap). Actions 1-4 keep their top/right/bottom/left places, 5-8 sit on the
+  diagonals. Also opens from More > Actions. Set **Standby Long-press** to
+  "Radial menu" (default on new installs); "HA action" and "Timer" still work.
+- 12 new icons (unlock, blinds, camera, car, plug, thermometer, snowflake,
+  shield, bolt, plant, scene, away); the blueprint icon lists now offer 40.
+- Now-playing banner: a new song shows for 10 s with the artwork across the
+  top half, scrolling title and artist, and the player name. Wakes the screen
+  from standby; tap or swipe to dismiss. Hidden at night, in menus and during
+  alerts. Pick several players in the blueprint, most important first; the
+  banner follows the first one playing. **Now Playing Banner** switch to turn
+  it off.
+- Player screen redesigned like the banner, with the volume ring. In the lower
+  half: swipe left for previous, right for next, double-tap to play/pause.
+  Artwork dims while paused. Artwork Style (plain or pixelated) applies to both.
+- Hourly forecast: tap the weather on the clock for the next five hours
+  (temperature, icon, temperature bars and rain chance).
+- Auto-brightness: choose a light sensor in the blueprint, then turn on
+  **Auto Brightness** and set its minimum, maximum and full-brightness lux.
+  Night mode keeps its own brightness.
+- Plane screen: DEPARTING / ARRIVING tag with a small jet instead of the
+  takeoff/landing pictograms.
+
 ## 1.1.2
 
 - Fix the clock showing UTC: a configured fallback timezone disabled the

@@ -18,7 +18,7 @@ enum Overlay : int {
 
 // Values stored in the `ui_view` global.
 enum View : int {
-  VIEW_STANDBY = 0,      // clock / pizza (cur_slot == SLOT_PIZZA)
+  VIEW_STANDBY = 0,      // clock
   VIEW_MENU = 1,         // Lights / Music / Heating / More
   VIEW_SLOT = 2,         // one light, player or thermostat
   VIEW_HEATING_HOME = 3,
@@ -30,15 +30,18 @@ enum View : int {
   VIEW_MUSIC_OPTIONS = 10,
   VIEW_QUICK = 14,       // quick settings (swipe down on the clock)
   VIEW_PLANE = 15,       // what's-that-plane
+  VIEW_FORECAST = 16,    // hourly forecast (tap the weather on the clock)
+  VIEW_NOW_PLAYING = 17, // song-change banner
+  VIEW_RADIAL = 18,      // radial action menu (long-press the clock)
 };
 
 // Special `cur_slot` values.
 constexpr int SLOT_NONE = -1;   // standby clock
-constexpr int SLOT_PIZZA = 6;   // pizza action screen
 constexpr int SLOT_COUNT = 6;
 
-constexpr int PIZZA_PAGE_SIZE = 4;
-constexpr int PIZZA_PAGES = 3;
+constexpr int RADIAL_SLICES = 8;
+// Blueprint action N (1-based) -> ring position, clockwise from the top.
+constexpr int RADIAL_POS[RADIAL_SLICES] = {0, 2, 4, 6, 1, 3, 5, 7};
 
 // A slot or the HA link is considered stale after this long without data.
 constexpr uint32_t HA_STALE_MS = 45000;

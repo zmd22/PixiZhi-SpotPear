@@ -20,8 +20,8 @@ red pixel colours; the physical brightness setting is not simulated.*
 - Touch controls and rim gestures for brightness, volume, and temperature.
 - Red night interface on every page, scheduled start/end times, and an independent
   saved Night Mode Brightness. Schedules crossing midnight are supported.
-- Pixel notifications, an adjustable kitchen timer, and four directional quick
-  actions (the pizza menu).
+- Pixel notifications, an adjustable kitchen timer, and a radial menu of up to
+  eight Home Assistant actions (long-press the clock).
 - Sendspin playback with paired-server authentication and a six-digit pairing
   screen. Existing trust is stored across restarts.
 - Internal ES8311 speaker or USB UAC 1.0 DAC output, manual selection, and optional
@@ -85,7 +85,9 @@ your own `ota:`/`wifi:` settings; see [configuration notes](docs/CONFIGURATION.m
   alert, or hold for one second to dismiss an urgent alert.
 - Timer: tap −/+ to set minutes, then START. PAUSE/RESUME controls playback of the
   countdown; hold the main button to reset. Home closes the page, not the timer.
-- The four pizza directions invoke the four configured Home Assistant actions.
+- Radial menu: hold the middle of the clock until the ring appears, slide to an
+  action and let go. Releasing in the middle keeps it open for a tap; it closes
+  after 8 s. Actions 1-4 sit top/right/bottom/left, 5-8 on the diagonals.
 - Enable **Night Mode** to use its schedule. Start is inclusive, end is exclusive;
   equal times disable the interval. **Night Mode Brightness** defaults to 10%.
   The clock rim adjusts that value at night; daytime brightness is retained.

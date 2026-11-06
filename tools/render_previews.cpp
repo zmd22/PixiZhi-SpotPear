@@ -65,9 +65,9 @@ int main(int argc, char **argv) {
 
   struct Shot { const char *name; int screen; };
   const Shot shots[] = {{"clock", S_CLOCK}, {"menu", S_MENU}, {"quick", S_QUICK}, {"light", S_SLOT},
-                        {"music", S_SLOT}, {"music-led", S_SLOT}, {"plane", S_PLANE}, {"plane-landing", S_PLANE},
+                        {"music", S_SLOT}, {"music-led", S_SLOT}, {"plane", S_PLANE}, {"plane-landing", S_PLANE}, {"forecast", S_FORECAST}, {"now-playing", S_NOW_PLAYING}, {"now-playing-led", S_NOW_PLAYING},
                         {"heating", S_HEAT_LIST}, {"thermostat", S_SLOT}, {"alerts", S_ALERTS}, {"timer", S_TIMER},
-                        {"status", S_STATUS}, {"more", S_MORE}, {"actions", S_PIZZA}, {"lights", S_LIST}};
+                        {"status", S_STATUS}, {"more", S_MORE}, {"actions", S_RADIAL}, {"lights", S_LIST}};
   auto art = cover(104);
   for (const auto &sh : shots) {
     UiState s = base;
@@ -87,11 +87,20 @@ int main(int argc, char **argv) {
     if (n == "timer") { s.timer_set_min = 5; s.timer_left = 272; s.timer_running = true; }
     if (n == "status") s.status_detail = 0;
     if (n == "actions") {
-      const char *labels[] = {"Cozy", "Music", "Good night", "All off"}, *keys[] = {"light", "music", "moon", "power"};
-      for (int k = 0; k < 4; k++) { s.pizza_labels[k] = labels[k]; s.pizza_keys[k] = keys[k]; }
-      s.pizza_pages = 2;
+      const char *labels[] = {"Movie", "Night", "All off", "Vacuum", "Lights", "Music", "Unlock", "Away"};
+      const char *keys[] = {"tv", "moon", "power", "vacuum", "light", "music", "unlock", "away"};
+      for (int k = 0; k < 8; k++) { s.radial_labels[k] = labels[k]; s.radial_keys[k] = keys[k]; }
+      s.radial_sel = 2;
     }
     if (n == "lights") s.category = 0;
+    if (n == "now-playing" || n == "now-playing-led") { s.art = art.data(); s.art_w = s.art_h = 104; s.art_led = n == "now-playing-led"; s.music_title = "Midnight City"; s.music_artist = "Night Drive"; s.music_player = "Kitchen"; }
+    if (n == "forecast") {
+      const char *cond[] = {"partlycloudy", "cloudy", "rainy", "rainy", "cloudy", "clear-night"};
+      const float temp[] = {14, 13, 11, 10, 9, 8};
+      const int rain[] = {10, 30, 80, 60, 20, 0};
+      s.fc_n = 5;
+      for (int k = 0; k < 5; k++) { s.fc_hour[k] = 16 + k; s.fc_temp[k] = temp[k]; s.fc_rain[k] = rain[k]; s.fc_cond[k] = cond[k]; }
+    }
     draw_frame(cv, s);
     save(dir + "/" + n + ".ppm", buf);
   }

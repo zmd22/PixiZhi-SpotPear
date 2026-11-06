@@ -1,7 +1,7 @@
 # =============================================================================
-#  PixiZhi SpotPear 1.1.2 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
+#  PixiZhi SpotPear 1.1.3 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
 #  Standby clock + up to 6 light / media player / thermostat screens picked in
-#  Home Assistant, pizza button screen, notification center, kitchen timer,
+#  Home Assistant, radial action menu, notification center, kitchen timer,
 #  pixel clock, Sendspin speaker, siren, LED notifications,
 #  USB host audio (Bluetooth disabled), screen + LED controls, battery, swipe sensors
 #  Hardware definitions based on RealDeco/xiaozhi-esphome (ball_v2_hw.yaml)
@@ -21,7 +21,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:
     name: pixizhi.spotpear
-    version: "1.1.2"
+    version: "1.1.3"
   min_version: 2026.11.0-dev
   name_add_mac_suffix: false
   includes:
@@ -230,6 +230,23 @@ api:
             id(status_target)[slot] = target;
             id(status_priority)[slot] = priority;
         - script.execute: ui_render
+    - action: set_ambient_light
+      variables:
+        lux: float
+      then:
+        - lambda: id(ambient_lux) = lux;
+        - script.execute: auto_brightness_apply
+    - action: set_banner_source
+      variables:
+        enabled: bool
+        name: string
+        title: string
+        artist: string
+      then:
+        - lambda: |-
+            id(banner_list_set) = enabled;
+            id(banner_src_name) = name; id(banner_src_title) = title; id(banner_src_artist) = artist;
+        - script.execute: np_banner_check
     - action: set_standby_climate
       variables:
         temperature: string
@@ -363,6 +380,24 @@ api:
             id(w_temp) = temp;
 
         - script.execute: apply_standby_style
+    - action: set_forecast
+      variables:
+        hours: int[]
+        temps: float[]
+        conditions: string[]
+        rain: int[]
+      then:
+        - lambda: |-
+            const size_t n = std::min<size_t>(5, std::min({hours.size(), temps.size(), conditions.size(), rain.size()}));
+            id(fc_hours).assign(hours.begin(), hours.begin() + n);
+            id(fc_temps).assign(temps.begin(), temps.begin() + n);
+            id(fc_conds).assign(conditions.begin(), conditions.begin() + n);
+            id(fc_rain).assign(rain.begin(), rain.begin() + n);
+        - if:
+            condition:
+              lambda: return id(ui_view) == pixizhi::VIEW_FORECAST;
+            then:
+              - script.execute: ui_render
     - action: set_pizza
       variables:
         slice: int
@@ -370,9 +405,11 @@ api:
         icon: string
       then:
         - lambda: |-
-            if (slice < 1 || slice > pixizhi::PIZZA_PAGES * pixizhi::PIZZA_PAGE_SIZE) return;
-            id(pizza_labels)[slice-1] = label;
-            id(pizza_keys)[slice-1] = icon;
+            if (slice < 1 || slice > pixizhi::RADIAL_SLICES) return;
+            // Actions 1-4 keep the old top/right/bottom/left places; 5-8 fill the diagonals.
+            const int pos = pixizhi::RADIAL_POS[slice - 1];
+            id(pizza_labels)[pos] = label;
+            id(pizza_keys)[pos] = icon;
             id(ui_render).execute();
     - action: notify
       variables:
@@ -524,25 +561,29 @@ globals:
   - id: notification_line
     type: int
     initial_value: '0'
+  # Radial action menu (long-press the clock); slices are set by the blueprint.
   - id: pizza_labels
     type: std::vector<std::string>
-    initial_value: 'std::vector<std::string>{"ACTION 1","ACTION 2","ACTION 3","ACTION 4","","","","","","","",""}'
+    initial_value: 'std::vector<std::string>(8,"")'
   - id: pizza_keys
     type: std::vector<std::string>
-    initial_value: 'std::vector<std::string>(12,"star")'
-  - id: pizza_pg
-    type: int
+    initial_value: 'std::vector<std::string>(8,"star")'
+  - id: radial_hold
+    type: bool
+    initial_value: 'false'
+  - id: radial_until
+    type: uint32_t
     initial_value: '0'
-  # Pages with at least one labelled slice; page 0 always exists.
-  - id: pizza_page_count
-    type: std::function<int()>
+  # Slice under a point relative to the centre, or -1 (centre / unset slice).
+  - id: radial_slice
+    type: std::function<int(int,int)>
     initial_value: |-
-      []() -> int {
-        int pages = 1;
-        for (int p = 1; p < pixizhi::PIZZA_PAGES; p++)
-          for (int k = 0; k < pixizhi::PIZZA_PAGE_SIZE; k++)
-            if (!id(pizza_labels)[p * pixizhi::PIZZA_PAGE_SIZE + k].empty()) pages = p + 1;
-        return pages;
+      [](int rx, int ry) -> int {
+        if (rx * rx + ry * ry < 40 * 40) return -1;
+        float deg = atan2f((float) ry, (float) rx) * 57.29578f + 90.0f;
+        if (deg < 0) deg += 360.0f;
+        const int k = int((deg + 22.5f) / 45.0f) % 8;
+        return id(pizza_labels)[k].empty() ? -1 : k;
       }
   - id: sendspin_pairing_visible
     type: bool
@@ -780,6 +821,35 @@ globals:
   - id: w_ok
     type: bool
     initial_value: "false"
+  # Highest-priority playing player from the blueprint's banner list.
+  - id: banner_list_set
+    type: bool
+    initial_value: "false"
+  - id: banner_src_name
+    type: std::string
+  - id: banner_src_title
+    type: std::string
+  - id: banner_src_artist
+    type: std::string
+  - id: np_banner_key
+    type: std::string
+  - id: np_banner_title
+    type: std::string
+  - id: np_banner_artist
+    type: std::string
+  - id: np_banner_player
+    type: std::string
+  - id: np_banner_dimmed
+    type: bool
+    initial_value: "false"
+  - id: fc_hours
+    type: std::vector<int>
+  - id: fc_temps
+    type: std::vector<float>
+  - id: fc_conds
+    type: std::vector<std::string>
+  - id: fc_rain
+    type: std::vector<int>
   - id: w_cond
     type: std::string
     initial_value: '""'
@@ -927,6 +997,11 @@ globals:
         s.time_valid = t.is_valid(); s.hour = t.hour; s.minute = t.minute;
         s.weather_ok = id(w_ok); s.weather_cond = id(w_cond); s.weather_temp = id(w_temp); s.weather_frame = id(weather_frame);
         s.status_row = id(status_row);
+        s.fc_n = std::min<int>(5, id(fc_hours).size());
+        for (int k = 0; k < s.fc_n; k++) {
+          s.fc_hour[k] = id(fc_hours)[k]; s.fc_temp[k] = id(fc_temps)[k];
+          s.fc_cond[k] = id(fc_conds)[k]; s.fc_rain[k] = id(fc_rain)[k];
+        }
         s.desk_temp = id(desk_temp); s.desk_rh = id(desk_rh);
         s.music_line = id(standby_music_enabled) && id(standby_state) == "playing" && !id(standby_title).empty();
         s.music_title = id(standby_title); s.music_artist = id(standby_artist);
@@ -964,10 +1039,8 @@ globals:
         s.n_line = id(notification_line);
         s.timer_left = id(timer_left); s.timer_set_min = id(timer_set_min);
         s.timer_running = id(timer_running); s.timer_done = id(timer_done);
-        for (int k = 0; k < 12; k++) { s.pizza_labels[k] = id(pizza_labels)[k]; s.pizza_keys[k] = id(pizza_keys)[k]; }
-        s.pizza_pages = id(pizza_page_count)();
-        s.pizza_page = std::min(id(pizza_pg), s.pizza_pages - 1);
-        s.pizza_sel = id(pizza_sel);
+        for (int k = 0; k < 8; k++) { s.radial_labels[k] = id(pizza_labels)[k]; s.radial_keys[k] = id(pizza_keys)[k]; }
+        s.radial_sel = id(pizza_sel);
         s.q_brightness = id(is_night)() ? (int) id(night_brightness).state
             : (int) roundf(id(screen_light).remote_values.get_brightness() * 100);
         s.q_volume = (int) roundf(id(ball_media_player).volume * 100);
@@ -984,6 +1057,14 @@ globals:
           s.p_index = id(plane_idx); s.p_count = id(plane_queue).size();
           s.p_remaining = 1.0f - std::min(1.0f, (now - id(plane_start_ms)) / 15000.0f);
         }
+        if (id(ui_view) == pixizhi::VIEW_NOW_PLAYING) {
+          s.music_title = id(np_banner_title); s.music_artist = id(np_banner_artist); s.music_player = id(np_banner_player);
+          // artwork only when the banner song is the ball's own Sendspin track
+          if (id(art_ready) && id(np_banner_title) == id(np_title).state) {
+            s.art = id(artwork_img).get_data_start();
+            s.art_w = id(artwork_img).get_width(); s.art_h = id(artwork_img).get_height();
+          }
+        }
         // Sendspin artwork belongs to the ball's own playback: show it on the
         // player screen whose current title matches the Sendspin track.
         if (id(art_ready) && s.cur_slot >= 0 && s.cur_slot < 6 && s.slots[s.cur_slot].music() &&
@@ -994,7 +1075,7 @@ globals:
         }
         int v = id(ui_view);
         s.screen = id(overlay) == pixizhi::OVERLAY_NOTIFICATIONS ? S_ALERTS : id(overlay) == pixizhi::OVERLAY_TIMER ? S_TIMER
-            : (id(cur_slot) == pixizhi::SLOT_PIZZA && v == pixizhi::VIEW_STANDBY) ? S_PIZZA : v;
+            : v;
       }
   - id: art_ready
     type: bool
@@ -1025,6 +1106,9 @@ globals:
   - id: loaded_pic
     type: std::string
     initial_value: '""'
+  - id: ambient_lux
+    type: float
+    initial_value: "NAN"
   - id: bl_requested
     type: float
     initial_value: "1.0"
@@ -1307,6 +1391,22 @@ text_sensor:
       - script.execute: update_now_playing
 
 switch:
+  - platform: template
+    id: now_playing_banner
+    name: Now Playing Banner
+    icon: mdi:music-box-outline
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+  - platform: template
+    id: auto_brightness
+    name: Auto Brightness
+    icon: mdi:brightness-auto
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - script.execute: auto_brightness_apply
   # Diagnostic only: the display freezes while local audio is active.
   - platform: template
     id: pause_display_during_audio
@@ -1368,13 +1468,6 @@ switch:
       - script.execute: apply_standby_style
     on_turn_off:
       - script.execute: apply_standby_style
-  - platform: template
-    id: show_pizza
-    name: Show Pizza Screen
-    icon: mdi:pizza
-    entity_category: config
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
   - platform: template
     id: siren
     name: Siren
@@ -1550,7 +1643,8 @@ select:
     options:
       - "HA action"
       - "Timer"
-    initial_option: "HA action"
+      - "Radial menu"
+    initial_option: "Radial menu"
 
 text:
   - platform: template
@@ -1590,6 +1684,51 @@ datetime:
       - script.execute: apply_standby_style
 
 number:
+  - platform: template
+    id: auto_brightness_min
+    name: Auto Brightness Min
+    icon: mdi:brightness-5
+    entity_category: config
+    unit_of_measurement: "%"
+    optimistic: true
+    restore_value: true
+    initial_value: 15
+    min_value: 1
+    max_value: 100
+    step: 1
+    mode: slider
+    on_value:
+      - script.execute: auto_brightness_apply
+  - platform: template
+    id: auto_brightness_max
+    name: Auto Brightness Max
+    icon: mdi:brightness-7
+    entity_category: config
+    unit_of_measurement: "%"
+    optimistic: true
+    restore_value: true
+    initial_value: 100
+    min_value: 1
+    max_value: 100
+    step: 1
+    mode: slider
+    on_value:
+      - script.execute: auto_brightness_apply
+  - platform: template
+    id: auto_brightness_lux
+    name: Auto Brightness Full At
+    icon: mdi:white-balance-sunny
+    entity_category: config
+    unit_of_measurement: "lx"
+    optimistic: true
+    restore_value: true
+    initial_value: 300
+    min_value: 10
+    max_value: 5000
+    step: 10
+    mode: box
+    on_value:
+      - script.execute: auto_brightness_apply
   - platform: template
     id: night_brightness
     name: Night Mode Brightness
@@ -1848,6 +1987,7 @@ touchscreen:
           for(auto &t:touches)if(t.id==id(gs_touch_id)&&t.state>=1&&t.state<=2){
             id(gs_last_x)=t.x;id(gs_last_y)=t.y;
             id(gs_max_move)=std::max(id(gs_max_move),std::max(std::abs((int)t.x-id(gs_start_x)),std::abs((int)t.y-id(gs_start_y))));
+            if(id(radial_hold)){int k=id(radial_slice)(t.x-120,t.y-120);if(k!=id(pizza_sel)){id(pizza_sel)=k;id(ui_render).execute();}break;}
             if(id(ui_wake_only)||id(ui_touch_view)!=id(ui_view)||id(ui_touch_slot)!=id(cur_slot)||id(ui_touch_overlay)!=id(overlay)){id(gs_ring_candidate)=false;break;}
             if(id(gs_ring_candidate)){
               float rx=t.x-120.0f,ry=t.y-120.0f;
@@ -1876,6 +2016,14 @@ touchscreen:
           const int px=id(gs_last_x), py=id(gs_last_y);
           const int dx0=px-id(gs_start_x),dy0=py-id(gs_start_y);
           const uint32_t held_ms=millis()-id(gs_start_ms);
+          if(id(ui_view)==pixizhi::VIEW_RADIAL){
+            // Released after the long-press: run the slice under the finger, or keep the menu open for a tap.
+            if(id(radial_hold)){id(radial_hold)=false;if(id(pizza_sel)>=0)id(radial_fire).execute(id(pizza_sel));else id(radial_until)=millis()+8000;return;}
+            if(id(gs_max_move)>16){id(radial_close).execute();return;}
+            int k=id(radial_slice)(px-120,py-120);
+            if(k<0)id(radial_close).execute();else id(radial_fire).execute(k);
+            return;
+          }
           if(id(overlay)==pixizhi::OVERLAY_NOTIFICATIONS) {
             if(std::abs(dy0)>=30) {id(notification_line)=std::max(0,id(notification_line)+(dy0<0?2:-2));id(ui_render).execute();}
             else if(id(gs_max_move)<=16) id(notif_dismiss).execute(held_ms>=1000);
@@ -1888,20 +2036,6 @@ touchscreen:
             if(py>=122&&py<168&&(px<96||px>144)&&!id(timer_running)&&!id(timer_done)&&id(timer_left)==id(timer_set_min)*60){
               id(timer_set_min)=std::max(1,std::min(60,id(timer_set_min)+(px<120?-1:1)));
               id(timer_left)=id(timer_set_min)*60;id(timer_ui).execute();}return;
-          }
-          if(id(cur_slot)==pixizhi::SLOT_PIZZA && id(ui_view)==pixizhi::VIEW_STANDBY) {
-            if(std::abs(dx0)>=34&&std::abs(dx0)>std::abs(dy0)){
-              int pages=id(pizza_page_count)();
-              if(pages>1){id(pizza_pg)=(id(pizza_pg)+(dx0<0?1:pages-1))%pages;id(pizza_sel)=-1;id(ui_render).execute();}
-              return;
-            }
-            if(id(gs_max_move)>16)return;
-            if(py>207){id(ui_home).execute();return;}
-            int dx=px-120,dy=py-120;
-            if(std::abs(dx)<30&&std::abs(dy)<30){id(ui_home).execute();return;}
-            id(pizza_sel)=std::abs(dy)>=std::abs(dx)?(dy<0?0:2):(dx>0?1:3);
-            if(id(pizza_labels)[id(pizza_pg)*pixizhi::PIZZA_PAGE_SIZE+id(pizza_sel)].empty()){id(pizza_sel)=-1;return;}
-            id(pizza_fire).execute();id(ui_render).execute();return;
           }
           if((id(ui_view)==pixizhi::VIEW_HEATING_LIST||id(ui_view)==pixizhi::VIEW_CATEGORY_LIST)&&std::abs(dy0)>=30&&std::abs(dy0)>std::abs(dx0)) {
             if(dy0<0)id(pulse_swipe_up).execute();else id(pulse_swipe_down).execute();
@@ -1925,12 +2059,19 @@ touchscreen:
             else{if(dy<0)id(pulse_swipe_up).execute();else id(pulse_swipe_down).execute();}
             if(id(ui_gesture_mode)==1||id(ui_gesture_mode)==2)return;
             int v=id(ui_view);
+            if(v==pixizhi::VIEW_NOW_PLAYING){id(np_banner_end).execute();return;}
             if(ax>=ay){
               if(v==5||v==9||v==10){int count=0;
                 if(v==5){for(int q=0;q<6;q++){auto &e=id(slot_eid)[q];if(id(ui_category)==0?(e.rfind("light.",0)==0||e.rfind("switch.",0)==0):e.rfind("media_player.",0)==0)count++;}}
                 else if(v==9||v==10){int s=id(cur_slot);if(s>=0&&s<6){std::string a=v==9?id(slot_modes)[s]+"|"+id(slot_presets)[s]:id(slot_sources)[s];for(char c:a)if(c=='|')count++;count+=v==9?1:4;}}
                 int maxoff=std::max(0,((count-1)/3)*3);id(ui_list_offset)=std::max(0,std::min(maxoff,id(ui_list_offset)+(dx<0?3:-3)));id(ui_render).execute();
               } else if(v==7){int q=id(ui_status_detail);id(ui_status_detail)=(q+(dx<0?1:5))%6;id(ui_render).execute();}
+              else if(v==2&&id(gs_start_y)>=124&&id(cur_slot)>=0&&id(cur_slot)<6&&id(slot_eid)[id(cur_slot)].rfind("media_player.",0)==0){
+                // lower half of the player screen: left = previous, right = next
+                int s=id(cur_slot),f=id(slot_features)[s];
+                if(dx<0&&(f&16))id(ui_command).execute(s,11,0,"media_previous_track");
+                else if(dx>0&&(f&32))id(ui_command).execute(s,11,0,"media_next_track");
+              }
               else if(v==0||v==2)id(ui_cycle).execute(dx<0?1:-1);
             }else if(v==pixizhi::VIEW_PLANE)id(plane_end).execute();
             else if(dy>0){if(v==pixizhi::VIEW_STANDBY)id(ui_open).execute(pixizhi::VIEW_QUICK);else if(v!=pixizhi::VIEW_QUICK)id(ui_back).execute();}
@@ -1940,13 +2081,14 @@ touchscreen:
             return;
           }
           if(id(gs_max_move)>16)return;
-          if(dt>=1400&&id(gs_max_move)<=12&&id(gs_clock_origin)){id(standby_long_press).execute();return;}
+          if(dt>=1400&&id(gs_max_move)<=12&&id(gs_clock_origin)&&id(longpress_mode).active_index().value_or(0)!=2){id(standby_long_press).execute();return;}
           if(dt>=600)return;
           if(dashboard){id(ui_tap).execute(id(gs_start_x),id(gs_start_y));return;}
           if(!id(gs_clock_origin))return;
           int x=id(gs_start_x),y=id(gs_start_y);
           if(!id(nq_title).empty()&&y>193){id(open_notifications).execute();return;}
           if(y<76&&id(status_row)>=0){id(ui_status_detail)=id(status_row);id(ui_open).execute(pixizhi::VIEW_STATUS_DETAIL);return;}
+          if(y<76&&id(w_ok)){id(ui_open).execute(pixizhi::VIEW_FORECAST);return;}
           if(y>=155&&id(standby_music_enabled)&&id(standby_state)=="playing"){
             for(int q=0;q<6;q++)if(id(slot_eid)[q]==id(standby_player)){id(cur_slot)=q;id(show_current).execute();return;}
             id(ui_category_open).execute(1);return;
@@ -2019,7 +2161,7 @@ script:
       - script.execute: ui_render
   - id: ui_home
     then:
-      - lambda: id(cur_slot) = -1; id(pizza_pg) = 0;
+      - lambda: id(cur_slot) = -1;
       - script.execute: show_current
   - id: ui_back
     then:
@@ -2240,15 +2382,18 @@ script:
       - lambda: |-
           int v=id(ui_view),s=id(cur_slot);
           if(v==pixizhi::VIEW_PLANE){id(plane_end).execute();return;}
+          if(v==pixizhi::VIEW_FORECAST){id(ui_home).execute();return;}
+          if(v==pixizhi::VIEW_NOW_PLAYING){id(np_banner_end).execute();return;}
           if(v==pixizhi::VIEW_QUICK){
             if(y>=72&&y<=214){int col=x<90?0:x<150?1:2,row=y<144?0:1;id(quick_tile).execute(row*3+col);}
             return;
           }
-          if(y>=207 && x>=91 && x<=149){id(ui_home).execute();return;}
+          const bool player=v==2&&s>=0&&s<6&&id(slot_eid)[s].rfind("media_player.",0)==0;
+          if(y>=207 && x>=91 && x<=149 && !player){id(ui_home).execute();return;}
           if(v==1){if(y>=43&&y<=110)id(ui_category_open).execute(x<120?0:1);
             else if(y>=116&&y<=187){if(x<120)id(ui_category_open).execute(2);else id(ui_open).execute(pixizhi::VIEW_MORE);}return;}
           if(v==6){if(y>=52&&y<=112){if(x<120)id(open_notifications).execute();else id(open_timer).execute();}
-            else if(y>=120&&y<=185){if(x<120){id(cur_slot)=6;id(show_current).execute();}else id(ui_open).execute(pixizhi::VIEW_HEATING_HOME);}return;}
+            else if(y>=120&&y<=185){if(x<120)id(radial_open).execute();else id(ui_open).execute(pixizhi::VIEW_HEATING_HOME);}return;}
           if(v==3){
             if(y>=55&&y<92){id(ui_category_open).execute(0);return;}
             if(y>=92&&y<163){int n=(y-92)/31,r=0;for(int q=0;q<6;q++)if(id(slot_eid)[q].rfind("climate.",0)==0){if(r++==n){id(cur_slot)=q;id(show_current).execute();return;}}}
@@ -2274,10 +2419,13 @@ script:
             if(y>=161&&y<=204){if(x<120){bool on=id(slot_pending)[s]==1?id(slot_expected)[s]>0:id(slot_state)[s]=="on";id(ui_command).execute(s,1,on?0:1,"");}
               else if(id(slot_color_capable)[s]||id(slot_white)[s])id(ui_colors_open).execute();}
           } else if(e.rfind("media_player.",0)==0){int f=id(slot_features)[s];
-            if(y>=160&&y<=206){if(x<87&&(f&16))id(ui_command).execute(s,11,0,"media_previous_track");
-              else if(x>153&&(f&32))id(ui_command).execute(s,11,0,"media_next_track");
-              else if(x>=87&&x<=153){bool playing=id(slot_pending)[s]==5?id(slot_expected)[s]>0:id(slot_state)[s]=="playing";if((playing&&(f&1))||(!playing&&(f&(512|16384))))id(ui_command).execute(s,5,playing?0:1,"");}}
-            else if(y>=26&&y<=155){id(ui_open).execute(pixizhi::VIEW_MUSIC_OPTIONS);}
+            // lower half: double-tap plays/pauses; upper half opens the player options
+            static uint32_t last_tap=0;
+            if(y>=124){
+              if((uint32_t)(millis()-last_tap)<=400){last_tap=0;bool playing=id(slot_pending)[s]==5?id(slot_expected)[s]>0:id(slot_state)[s]=="playing";if((playing&&(f&1))||(!playing&&(f&(512|16384))))id(ui_command).execute(s,5,playing?0:1,"");}
+              else last_tap=millis();
+            }
+            else if(y>=26){id(ui_open).execute(pixizhi::VIEW_MUSIC_OPTIONS);}
           } else {
             if(y>=145&&y<=181&&(x<95||x>145)&&(id(slot_features)[s]&1)){
               float t=id(slot_pending)[s]==4?id(slot_expected)[s]:id(slot_ttarget)[s];float step=id(slot_step)[s];
@@ -2342,9 +2490,9 @@ script:
   - id: ui_paint_frame
     then:
       - lambda: |-
-          if (!id(ui_ready) || (id(overlay)==pixizhi::OVERLAY_NONE && id(ui_view)==pixizhi::VIEW_STANDBY && id(cur_slot)!=pixizhi::SLOT_PIZZA) || id(overlay)>2) return;
+          if (!id(ui_ready) || (id(overlay)==pixizhi::OVERLAY_NONE && id(ui_view)==pixizhi::VIEW_STANDBY) || id(overlay)>2) return;
           lv_obj_t *cv = id(overlay)==pixizhi::OVERLAY_NOTIFICATIONS ? id(notif_canvas) : id(overlay)==pixizhi::OVERLAY_TIMER ? id(timer_canvas)
-              : id(cur_slot)==pixizhi::SLOT_PIZZA && id(ui_view)==pixizhi::VIEW_STANDBY ? id(pizza_canvas) : id(ui_canvas);
+              : id(ui_canvas);
           if (cv == nullptr) return;
           if (!id(ui_ready)) return;
           lv_draw_buf_t *buf = lv_canvas_get_draw_buf(cv);
@@ -2459,6 +2607,23 @@ script:
       - delay: 200ms
       - binary_sensor.template.publish: { id: swipe_down, state: OFF }
 
+  # Maps the HA light sensor onto the Screen light on a log curve. Night mode
+  # keeps its own brightness; turning the dial overrides until the next reading.
+  - id: auto_brightness_apply
+    then:
+      - lambda: |-
+          const float lux = id(ambient_lux);
+          if (!id(auto_brightness).state || std::isnan(lux) || id(is_night)()) return;
+          float lo = id(auto_brightness_min).state / 100.0f, hi = id(auto_brightness_max).state / 100.0f;
+          if (hi < lo) std::swap(lo, hi);
+          const float t = fminf(1.0f, log10f(1.0f + fmaxf(0.0f, lux)) / log10f(1.0f + id(auto_brightness_lux).state));
+          const float target = lo + (hi - lo) * t;
+          if (fabsf(target - id(screen_light).remote_values.get_brightness()) < 0.02f) return;
+          auto call = id(screen_light).turn_on();
+          call.set_brightness(target);
+          call.set_transition_length(2000);
+          call.perform();
+
   - id: apply_backlight
     then:
       - lambda: |-
@@ -2480,6 +2645,7 @@ script:
           const bool changed = !themed || id(night_active) != night;
           themed = true;
           id(night_active) = night;
+          if (changed && !night) id(auto_brightness_apply).execute();
           // Color filters cover native LVGL controls (picker/pairing); canvases
           // also tint their pixels explicitly, since image pixels bypass text filters.
           static lv_color_filter_dsc_t red_filter = {
@@ -2492,7 +2658,7 @@ script:
             lv_obj_set_style_color_filter_opa(o, night ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
             for (uint32_t i=0;i<lv_obj_get_child_count(o);i++) self(self,lv_obj_get_child(o,i));
           };
-          lv_obj_t *roots[] = {id(standby_page)->obj,id(dashboard_page)->obj,id(colors_page)->obj,id(pizza_page)->obj,id(notif_page)->obj,id(timer_page)->obj,id(pairing_card)};
+          lv_obj_t *roots[] = {id(standby_page)->obj,id(dashboard_page)->obj,id(colors_page)->obj,id(notif_page)->obj,id(timer_page)->obj,id(pairing_card)};
           if(changed){for(auto *o:roots)tint(tint,o);id(draw_wheel).execute();}
           id(apply_backlight).execute();
           id(draw_dot_clock).execute();
@@ -2544,6 +2710,74 @@ script:
   - id: update_now_playing
     then:
       - script.execute: draw_dot_clock
+      - script.execute: np_banner_check
+
+  # Song-change banner. Source: the first playing player of the blueprint's
+  # priority list (or the standby player when the list is empty), else the
+  # ball's own Sendspin stream. Waits a moment so title, artist and artwork settle.
+  - id: np_banner_check
+    mode: restart
+    then:
+      - delay: 1200ms
+      - lambda: |-
+          std::string t, a, player;
+          if (id(banner_list_set)) {
+            // the blueprint's priority list replaces the standby player
+            if (!id(banner_src_title).empty()) { t = id(banner_src_title); a = id(banner_src_artist); player = id(banner_src_name); }
+          } else if (id(standby_state) == "playing" && !id(standby_title).empty()) {
+            t = id(standby_title); a = id(standby_artist);
+            // name from a matching favorite, else the entity id without its domain
+            const std::string &eid = id(standby_player);
+            player = eid.substr(eid.find('.') + 1);
+            for (auto &c : player) if (c == '_') c = ' ';
+            for (int q = 0; q < 6; q++) if (id(slot_eid)[q] == eid && !id(slot_label)[q].empty()) player = id(slot_label)[q];
+          }
+          if (t.empty() && !id(np_title).state.empty()) {
+            t = id(np_title).state; a = id(np_artist).state; player = "${friendly_name}";
+          }
+          if (t.empty()) return;
+          const std::string key = t + '\x1f' + a;
+          if (key == id(np_banner_key)) return;
+          const bool first = id(np_banner_key).empty();
+          id(np_banner_key) = key;
+          if (first && millis() < 120000) return;  // no banner for the song already playing at boot
+          id(np_banner_title) = t;
+          id(np_banner_artist) = a;
+          id(np_banner_player) = player;
+          if (!id(now_playing_banner).state || !id(ui_ready) || id(is_night)() || id(plane_active) ||
+              id(overlay) != pixizhi::OVERLAY_NONE || id(siren_active) || id(setup_state) == 1 || id(setup_state) == 2 ||
+              id(sendspin_pairing_visible)) return;
+          const int v = id(ui_view);
+          if (v == pixizhi::VIEW_NOW_PLAYING) { id(ui_scroll_ms) = millis(); id(np_banner_timer).execute(); id(ui_render).execute(); return; }
+          // only over the clock (awake or in standby), never while the user is in a menu
+          if (v != pixizhi::VIEW_STANDBY || id(cur_slot) != pixizhi::SLOT_NONE) return;
+          id(np_banner_dimmed) = id(bl_dimmed);
+          id(ui_view) = pixizhi::VIEW_NOW_PLAYING;
+          id(ui_scroll_ms) = millis();
+          id(ui_scroll_tick) = -1;
+          id(wake_screen).execute();
+          id(np_banner_timer).execute();
+          id(np_banner_show).execute();
+  - id: np_banner_show
+    then:
+      - lvgl.page.show: dashboard_page
+      - script.execute: ui_render
+  - id: np_banner_timer
+    mode: restart
+    then:
+      - delay: 10s
+      - script.execute: np_banner_end
+  - id: np_banner_end
+    then:
+      - script.stop: np_banner_timer
+      - if:
+          condition:
+            lambda: return id(ui_view) == pixizhi::VIEW_NOW_PLAYING;
+          then:
+            - lambda: id(ui_view) = pixizhi::VIEW_STANDBY;
+            - script.execute: show_current
+            - lambda: |-
+                if (id(np_banner_dimmed)) { id(bl_dimmed) = true; id(apply_backlight).execute(); }
 
   - id: draw_wheel
     then:
@@ -2619,7 +2853,6 @@ script:
             for (int i = cur + 1; i < 6; i++) {
               if (!id(slot_eid)[i].empty()) { next = i; break; }
             }
-            if (next < 0 && id(show_pizza).state) next = 6;
           }
           id(cur_slot) = next;
       - script.execute: show_current
@@ -2634,18 +2867,12 @@ script:
           id(ui_scroll_tick) = -1;
       - if:
           condition:
-            lambda: return id(cur_slot) == pixizhi::SLOT_PIZZA;
+            lambda: return id(cur_slot) < 0;
           then:
-            - lvgl.page.show: pizza_page
+            - lvgl.page.show: standby_page
           else:
-            - if:
-                condition:
-                  lambda: return id(cur_slot) < 0;
-                then:
-                  - lvgl.page.show: standby_page
-                else:
-                  - lvgl.page.show: dashboard_page
-                  - script.execute: ui_render
+            - lvgl.page.show: dashboard_page
+            - script.execute: ui_render
       - script.execute: update_hint
       - script.execute: ui_render
 
@@ -2679,27 +2906,40 @@ script:
             if(s<0||s>=6)return 0.0f;
             return static_cast<float>(std::max(id(slot_kelvin_min)[s],std::min(id(slot_kelvin_max)[s],kelvin)));
           option: ""
-  # Pizza screen: work out which slice the finger is on
-  - id: pizza_hit
+  # Radial action menu: open (from the long-press), run a slice, close.
+  - id: radial_open
     then:
+      - lambda: |-
+          id(overlay) = pixizhi::OVERLAY_NONE;
+          id(cur_slot) = pixizhi::SLOT_NONE;
+          id(ui_view) = pixizhi::VIEW_RADIAL;
+          id(pizza_sel) = -1;
+          id(radial_until) = millis() + 8000;
+      - lvgl.page.show: dashboard_page
       - script.execute: ui_render
-
-  - id: pizza_clear
+  - id: radial_fire
+    parameters:
+      slice: int
     then:
-      - lambda: id(pizza_sel) = -1;
+      - lambda: id(pizza_sel) = slice; id(radial_until) = 0;
       - script.execute: ui_render
-
-  - id: pizza_fire
+      - homeassistant.event:
+          event: esphome.pixizhi_pizza
+          data:
+            node: ${name}
+            slice: !lambda |-
+              for (int k = 0; k < pixizhi::RADIAL_SLICES; k++) if (pixizhi::RADIAL_POS[k] == slice) return esphome::to_string(k + 1);
+              return std::string("0");
+      - delay: 350ms
+      - script.execute: radial_close
+  - id: radial_close
     then:
+      - lambda: id(radial_hold) = false; id(pizza_sel) = -1;
       - if:
           condition:
-            lambda: return id(pizza_sel) >= 0;
+            lambda: return id(ui_view) == pixizhi::VIEW_RADIAL;
           then:
-            - homeassistant.event:
-                event: esphome.pixizhi_pizza
-                data:
-                  node: ${name}
-                  slice: !lambda return esphome::to_string(id(pizza_pg) * pixizhi::PIZZA_PAGE_SIZE + id(pizza_sel) + 1);
+            - script.execute: ui_home
 
   # LED notification: flash, then put the LED back the way it was
   - id: flash_led
@@ -3273,6 +3513,21 @@ script:
 
 
 interval:
+  # Radial menu: open after a still 0.7 s press near the clock's centre; close when idle.
+  - interval: 100ms
+    then:
+      - lambda: |-
+          if (id(ui_view) == pixizhi::VIEW_RADIAL) {
+            if (!id(radial_hold) && id(radial_until) != 0 && (int32_t)(millis() - id(radial_until)) > 0) id(radial_close).execute();
+            return;
+          }
+          if (!id(gs_touch_active) || !id(gs_clock_origin) || id(gs_rotating) || id(ui_wake_only) || id(gs_max_move) > 12) return;
+          if (id(longpress_mode).active_index().value_or(0) != 2 || (uint32_t)(millis() - id(gs_start_ms)) < 700) return;
+          const int rx = id(gs_start_x) - 120, ry = id(gs_start_y) - 120;
+          if (rx * rx + ry * ry > 80 * 80) return;
+          id(radial_hold) = true;
+          id(ui_touch_view) = pixizhi::VIEW_RADIAL;
+          id(radial_open).execute();
   - interval: 250ms
     then:
       - script.execute: audio_display_policy
@@ -3343,7 +3598,7 @@ interval:
               id(ball_media_player).state == media_player::MEDIA_PLAYER_STATE_PLAYING;
           if (audio_active && (uint32_t)(now - last_frame) < 100) return;
           last_frame = now;
-          if (id(ui_view) != pixizhi::VIEW_STANDBY || id(overlay)==pixizhi::OVERLAY_NOTIFICATIONS || id(overlay)==pixizhi::OVERLAY_TIMER || id(cur_slot)==pixizhi::SLOT_PIZZA) {
+          if (id(ui_view) != pixizhi::VIEW_STANDBY || id(overlay)==pixizhi::OVERLAY_NOTIFICATIONS || id(overlay)==pixizhi::OVERLAY_TIMER ) {
             if (id(ui_frame_dirty)) {
               id(ui_frame_dirty) = false;
               id(ui_paint_frame).execute();
@@ -3370,7 +3625,7 @@ interval:
           if(id(ui_view)!=pixizhi::VIEW_STANDBY && id(overlay)==pixizhi::OVERLAY_NONE && !id(gs_touch_active)) {
             int tick=(now-id(ui_scroll_ms))/220;
             // Only redraw a changing marquee, not every idle page.
-            int s=id(cur_slot);bool scroll=id(ui_view)==pixizhi::VIEW_STATUS_DETAIL || (id(ui_view)==pixizhi::VIEW_SLOT&&s>=0&&s<6&&id(slot_eid)[s].rfind("media_player.",0)==0 && (id(slot_title)[s].size()>15||id(slot_artist)[s].size()>15));
+            int s=id(cur_slot);bool scroll=id(ui_view)==pixizhi::VIEW_STATUS_DETAIL || id(ui_view)==pixizhi::VIEW_NOW_PLAYING || (id(ui_view)==pixizhi::VIEW_SLOT&&s>=0&&s<6&&id(slot_eid)[s].rfind("media_player.",0)==0 && (id(slot_title)[s].size()>15||id(slot_artist)[s].size()>15));
             if(scroll&&tick!=id(ui_scroll_tick)){id(ui_scroll_tick)=tick;repaint=true;}
             static uint32_t music_frame=0;
             if(id(ui_view)==pixizhi::VIEW_SLOT&&s>=0&&s<6&&id(slot_eid)[s].rfind("media_player.",0)==0&&id(slot_state)[s]=="playing"&&now/400!=music_frame){music_frame=now/400;repaint=true;}
@@ -4032,19 +4287,6 @@ lvgl:
               - script.execute: { id: ha_rgb, rgb: 0xFF4FA0 }
 
     # ---------------- THERMOSTAT ----------------
-    # ---------------- PIZZA BUTTONS ----------------
-    - id: pizza_page
-      bg_color: 0x000000
-      scrollable: false
-      widgets:
-        - canvas:
-            id: pizza_canvas
-            align: CENTER
-            width: 240
-            height: 240
-            transparent: false
-            clickable: false
-
     - id: notif_page
       bg_color: 0x000000
       scrollable: false
