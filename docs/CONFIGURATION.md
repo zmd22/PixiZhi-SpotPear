@@ -23,7 +23,8 @@ and cooling setpoints.
 ## Blueprints
 
 - `blueprints/pixizhi_screens_blueprint.yaml`: favourite screens, standby data,
-  status slots, four quick actions, gesture actions, and maximum dial volume.
+  status slots, up to eight radial-menu actions, gesture actions, and maximum
+  dial volume.
 - `blueprints/pixizhi_notify_blueprint.yaml`: normal and urgent display alerts.
 - `blueprints/pixizhi_led_notifications.yaml`: temporary LED flashes with restore.
 
@@ -56,13 +57,19 @@ colours/effects.
 
 ## Gestures and feedback
 
-Clock long press is a stationary 1.4-second hold, configurable as Timer or an HA
-action. Rim adjustment consumes the touch so it does not also start a timer or
-issue a swipe/tap. The first touch after dimming wakes the screen only.
+**Standby Long-press** chooses what holding the middle of the clock does:
+the radial menu (default, opens after 0.7 s), the timer or an HA action (both
+after a stationary 1.4-second hold). Rim adjustment consumes the touch so it
+does not also start a timer or issue a swipe/tap. The first touch after dimming
+wakes the screen only.
 
 HA command feedback waits for state confirmation. A timeout shows
 NO CONFIRMATION; it does not prove the command was rejected. Unavailable/stale
 controls are blocked. Clock, brightness, and timer remain local.
+
+The screens blueprint sends data when an entity changes, a small keep-alive
+every 15 seconds and a full resync every five minutes. Without the keep-alive
+for 45 seconds the ball shows NO HA DATA.
 
 The optional Pause Display During Audio setting defaults off. It is a diagnostic
 switch: the screen may show old information while paused. Leave it off for
@@ -136,7 +143,9 @@ volume is restored and the LED returns to its notification colour, or switches o
 
 **Theme Color** picks one of 20 saturated accent colours for values, icons and
 rings. Text stays white/grey and status colours stay fixed (green battery and
-connection, red alarms). **Artwork Style** chooses how Sendspin album art is
+connection, red alarms). Text is upper-case ASCII: Western and Central European
+accents fold to their base letters and curly quotes, dashes and ellipses to
+plain ones; other scripts show as `?`. **Artwork Style** chooses how Sendspin album art is
 shown on the player screen: LED dots (default) or the full image. Artwork is
 shown when the player screen's current title matches the track the ball is
 playing through Sendspin.
@@ -154,8 +163,9 @@ Requires the What's-that-plane custom integration. In the screens blueprint,
 check the **Visible flights sensor** (default `sensor.visible_flights`). On the
 device, turn on **Plane Spotting** and set **Home Airport** (IATA code, default
 `FRA`). Each plane that newly enters the view is shown for 15 seconds; several
-new planes are shown one after another, then the ball returns to the previous
-screen. Departures from the home airport get a takeoff icon, all others a
-landing icon. Tap or swipe to dismiss. The integration provides no flight
+new planes are shown one after another, then the ball returns to the clock.
+Planes only appear over the clock, never while a menu is open, and are skipped
+in night mode and with Do Not Disturb on. Departures from the home airport are
+tagged DEPARTING, all others ARRIVING. Tap or swipe to dismiss. The integration provides no flight
 number, so the callsign is shown as the flight code and the registration on
 the bottom line.

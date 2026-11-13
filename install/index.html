@@ -3,38 +3,67 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
   <title>Install PixiZhi SpotPear</title>
-  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10.1.1/dist/web/install-button.js?module"></script>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5; color: #1d1d1f; }
-    h1 { margin-bottom: .2rem; }
-    .ver { color: #666; margin-top: 0; }
-    ol li { margin-bottom: .6rem; }
-    code { background: #f2f2f2; padding: 0 .3rem; border-radius: 4px; }
+    :root { --bg: #0e0f13; --card: #17191f; --line: #262932; --ink: #ececec; --muted: #9698a0; --accent: #ffb000; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 46rem; margin: 0 auto; padding: 2.5rem 16px 4rem; }
+    h1 { margin: 0; font-size: 2rem; letter-spacing: .02em; }
+    h2 { margin: 2.2rem 0 .6rem; font-size: 1.05rem; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
+    .ver { margin: .2rem 0 1.5rem; color: var(--muted); }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.25rem; }
+    ol { margin: 0; padding-left: 1.3rem; }
+    li { margin-bottom: .55rem; }
+    li:last-child { margin-bottom: 0; }
+    code { background: #23262e; padding: .05rem .35rem; border-radius: 5px; font-size: .92em; }
+    a { color: var(--accent); }
+    .install { margin: 1.25rem 0 0; }
+    esp-web-install-button { --esp-tools-button-color: #ffb000; --esp-tools-button-text-color: #111; }
+    .links { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: .9rem; }
+    .links a { text-decoration: none; border: 1px solid var(--line); border-radius: 999px; padding: .4rem .9rem; background: #1d2027; }
+    .links a:hover { border-color: var(--accent); }
+    img { display: block; width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--line); margin-top: 1rem; }
+    .note { color: var(--muted); font-size: .92rem; }
   </style>
 </head>
 <body>
+<main>
   <h1>PixiZhi SpotPear</h1>
   <p class="ver">Firmware __VERSION__ for the Spotpear Ball v2 (ESP32-S3)</p>
 
-  <ol>
-    <li>Use Chrome or Edge on a computer. Connect the ball with a USB-C data cable.</li>
-    <li>Hold the <b>BOOT</b> button while plugging in (the firmware uses USB for audio, so the
-        chip must start in download mode).</li>
-    <li>Click <b>Install</b> and pick the port that appears.</li>
-  </ol>
-
-  <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
+  <div class="card">
+    <ol>
+      <li>Use Chrome or Edge on a computer. Connect the ball with a USB-C data cable.</li>
+      <li>Hold the <b>BOOT</b> button while plugging in. The firmware uses USB for audio, so the
+          chip must start in download mode.</li>
+      <li>Click <b>Install</b> and pick the port that appears.</li>
+    </ol>
+    <div class="install"><esp-web-install-button manifest="manifest.json"></esp-web-install-button></div>
+  </div>
 
   <h2>After installing</h2>
-  <ol>
-    <li>Unplug and reconnect normally. The ball shows <b>PIXIZHI SETUP</b> with a QR code.</li>
-    <li>Scan it (or join the <code>PixiZhi Setup</code> Wi-Fi) and choose your network.</li>
-    <li>In Home Assistant: <b>Settings → Devices &amp; services</b>, add the discovered
-        <b>PixiZhi SpotPear</b>, and allow it to perform Home Assistant actions.</li>
-    <li>Import the blueprints from the
-        <a href="https://github.com/zmd22/PixiZhi-SpotPear/tree/main/blueprints">repository</a>.</li>
-  </ol>
-  <p>Later versions arrive as a normal firmware update in Home Assistant.</p>
+  <div class="card">
+    <ol>
+      <li>Unplug and reconnect normally. The ball shows <b>PIXIZHI SETUP</b> with a QR code.</li>
+      <li>Scan it, or join the <code>PixiZhi Setup</code> Wi-Fi, and choose your network.</li>
+      <li>In Home Assistant open <b>Settings → Devices &amp; services</b>, add the discovered
+          <b>PixiZhi SpotPear</b> and allow it to perform Home Assistant actions.</li>
+      <li>Import the blueprints you need and create an automation from each:</li>
+    </ol>
+    <div class="links">
+      <a href="https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fzmd22%2FPixiZhi-SpotPear%2Fmain%2Fblueprints%2Fpixizhi_screens_blueprint.yaml">Screens and controls</a>
+      <a href="https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fzmd22%2FPixiZhi-SpotPear%2Fmain%2Fblueprints%2Fpixizhi_notify_blueprint.yaml">Display notifications</a>
+      <a href="https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2Fzmd22%2FPixiZhi-SpotPear%2Fmain%2Fblueprints%2Fpixizhi_led_notifications.yaml">LED notifications</a>
+    </div>
+  </div>
+  <p class="note">Later versions arrive as a normal firmware update in Home Assistant.
+     Documentation and source: <a href="https://github.com/zmd22/PixiZhi-SpotPear">github.com/zmd22/PixiZhi-SpotPear</a>.</p>
+
+  <h2>The interface</h2>
+  <img src="overview.png" alt="PixiZhi screens: clock, menus, lights, player, thermostat, forecast, notifications and night mode" loading="lazy">
+</main>
 </body>
 </html>

@@ -26,6 +26,7 @@ enum View : int {
   VIEW_CATEGORY_LIST = 5,
   VIEW_MORE = 6,
   VIEW_STATUS_DETAIL = 7,
+  VIEW_COLORS = 8,       // colour / white picker of a light
   VIEW_CLIMATE_MODES = 9,
   VIEW_MUSIC_OPTIONS = 10,
   VIEW_QUICK = 14,       // quick settings (swipe down on the clock)

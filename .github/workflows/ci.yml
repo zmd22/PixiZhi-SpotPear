@@ -1,0 +1,44 @@
+# Fast checks on every push and pull request: host tests of the shared headers,
+# the public-source check, a preview render, and an ESPHome config validation.
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Same pinned ESPHome commit as the release workflow.
+  ESPHOME_REF: 354660cafc8c3baf5b8656f5febd03623831322a
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Public-source check
+        run: python3 tools/check_public.py
+      - name: Host tests
+        run: |
+          g++ -std=c++17 -Wall -fsanitize=address,undefined -I. tests/test_helpers.cpp -o /tmp/test_helpers
+          /tmp/test_helpers
+      - name: Render previews
+        run: |
+          g++ -std=c++17 -O2 -Wall -I. tools/render_previews.cpp -o /tmp/render_previews
+          mkdir -p /tmp/previews && /tmp/render_previews /tmp/previews
+          ls /tmp/previews | wc -l
+
+  config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ESPHome
+        run: pip install "esphome @ git+https://github.com/esphome/esphome.git@${ESPHOME_REF}"
+      - name: Validate configuration
+        run: esphome config pixizhi.yaml > /dev/null

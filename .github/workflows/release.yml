@@ -93,6 +93,7 @@ jobs:
           cp "out/pixizhi-$VERSION.factory.bin" site/firmware.factory.bin
           cp "out/pixizhi-$VERSION.ota.bin" site/firmware.ota.bin
           sed "s/__VERSION__/$VERSION/g" install/index.html > site/index.html
+          cp docs/images/interface-overview.png site/overview.png
           ls -l out site
 
       - name: Upload to release

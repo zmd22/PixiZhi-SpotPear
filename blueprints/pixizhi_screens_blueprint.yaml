@@ -1,5 +1,5 @@
 blueprint:
-  name: PixiZhi SpotPear Pixel Control v9 — apartment controller
+  name: PixiZhi SpotPear - screens and controls
   description: >-
     Pick up to 6 lights, switches, media players or thermostats to show on the PixiZhi SpotPear,
     plus the weather entity for the standby screen.
@@ -108,7 +108,7 @@ blueprint:
       description: >-
         Weather alternates with active status slots on the matrix clock.
         Each slot uses the first selected entity (leave empty to disable).
-        States are refreshed every 15 seconds. Use short ASCII labels, up to 12 characters.
+        Statuses update when their entity changes. Use short ASCII labels, up to 12 characters.
       icon: mdi:dots-horizontal
       collapsed: true
       input:
@@ -1382,8 +1382,13 @@ triggers:
   - trigger: state
     entity_id: !input standby_humidity
     id: climate
+  # Light keep-alive every 15 s; everything else is sent when it changes, with a
+  # full resync every five minutes as a safety net.
   - trigger: time_pattern
     seconds: "/15"
+    id: heartbeat
+  - trigger: time_pattern
+    minutes: "/5"
     id: statuses
   - trigger: time_pattern
     minutes: "/15"
@@ -1420,6 +1425,13 @@ triggers:
     id: refresh
 
 actions:
+  - if:
+      - condition: template
+        value_template: "{{ trigger.id == 'heartbeat' }}"
+    then:
+      - action: "esphome.{{ node }}_heartbeat"
+        continue_on_error: true
+      - stop: Heartbeat sent
   - if:
       - condition: template
         value_template: "{{ trigger.id in ['banner', 'refresh'] }}"
@@ -1481,6 +1493,9 @@ actions:
       - condition: template
         value_template: "{{ trigger.id == 'status_tap' }}"
     then:
+      # Only this automation's own device.
+      - condition: template
+        value_template: "{{ trigger.event.data.get('node', '') | replace('-', '_') == node | replace('-', '_') }}"
       - choose:
           - conditions: "{{ trigger.event.data.get('slot', 0) | int == 1 }}"
             sequence: !input status_1_tap_action

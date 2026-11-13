@@ -1,5 +1,5 @@
 # =============================================================================
-#  PixiZhi SpotPear 1.1.3 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
+#  PixiZhi SpotPear 1.1.4 - Home Assistant remote for the XiaoZhi Spotpear ball (Ball v2)
 #  Standby clock + up to 6 light / media player / thermostat screens picked in
 #  Home Assistant, radial action menu, notification center, kitchen timer,
 #  pixel clock, Sendspin speaker, siren, LED notifications,
@@ -21,7 +21,7 @@ esphome:
   friendly_name: ${friendly_name}
   project:
     name: pixizhi.spotpear
-    version: "1.1.3"
+    version: "1.1.4"
   min_version: 2026.11.0-dev
   name_add_mac_suffix: false
   includes:
@@ -34,7 +34,6 @@ esphome:
       - script.execute: nq_restore
       - script.execute: timer_restore
       - script.execute: timer_publish
-      - script.execute: draw_wheel
       - script.execute: update_clock
       - script.execute: apply_standby_style
       - script.execute: show_current
@@ -169,6 +168,15 @@ api:
         data:
           node: ${name}
   actions:
+    # Sent by the screens blueprint every 15 s: keeps the HA link and the slots
+    # marked fresh without re-sending their data.
+    - action: heartbeat
+      then:
+        - lambda: |-
+            const uint32_t now = millis();
+            id(ui_last_sync) = now;
+            for (int i = 0; i < 6; i++)
+              if (!id(slot_eid)[i].empty() && id(slot_seen)[i] != 0) id(slot_seen)[i] = now;
     - action: set_standby_music_options
       variables:
         enabled: bool
@@ -331,13 +339,11 @@ api:
             id(slot_title)[slot] = title;
             id(slot_artist)[slot] = artist;
             id(slot_vol)[slot] = volume;
-            id(slot_pic)[slot] = picture;
             id(slot_tnow)[slot] = temp_now;
             id(slot_ttarget)[slot] = temp_target;
             id(slot_tmin)[slot] = temp_min;
             id(slot_tmax)[slot] = temp_max;
             id(slot_action)[slot] = hvac_action;
-            id(slot_batt_low)[slot] = battery_low;
             id(ui_last_sync) = millis();
             id(slot_seen)[slot] = millis();
             int k = id(slot_pending)[slot];
@@ -348,7 +354,7 @@ api:
                        (k == 4 && fabsf(temp_target - expected) < 0.05f) ||
                        (k == 5 && ((expected > 0 && state == "playing") || (expected == 0 && state != "playing"))) ||
                        (k == 6 && ((expected > 0 && state != "off") || (expected == 0 && state == "off"))) ||
-                       (k == 7 && static_cast<int>(color) == static_cast<int>(expected));
+                       (k == 7 && state == "on");  // lights rarely report the exact RGB back
             if (ack && !id(slot_temp_due)[slot]) id(slot_pending)[slot] = 0;
         - if:
             condition:
@@ -365,17 +371,11 @@ api:
         condition: string
       then:
         - lambda: |-
-            static const std::map<std::string, const char *> icons = {
-              {"clear-night", "\U000F0594"}, {"cloudy", "\U000F0590"},
-              {"exceptional", "\U000F05D6"}, {"fog", "\U000F0591"},
-              {"hail", "\U000F0592"}, {"lightning", "\U000F0593"},
-              {"lightning-rainy", "\U000F067E"}, {"partlycloudy", "\U000F0595"},
-              {"pouring", "\U000F0596"}, {"rainy", "\U000F0597"},
-              {"snowy", "\U000F0598"}, {"snowy-rainy", "\U000F067F"},
-              {"sunny", "\U000F0599"}, {"windy", "\U000F059D"},
-              {"windy-variant", "\U000F059E"}};
-            auto it = icons.find(condition);
-            id(w_ok) = !(it == icons.end() || std::isnan(temp));
+            static const char *const known[] = {"clear-night", "cloudy", "exceptional", "fog", "hail", "lightning",
+              "lightning-rainy", "partlycloudy", "pouring", "rainy", "snowy", "snowy-rainy", "sunny", "windy", "windy-variant"};
+            bool ok = false;
+            for (const char *k : known) ok |= condition == k;
+            id(w_ok) = ok && !std::isnan(temp);
             id(w_cond) = condition;
             id(w_temp) = temp;
 
@@ -454,12 +454,6 @@ api:
               lambda: return urgent;
             then:
               - script.execute: urgent_loop
-            else:
-              - if:
-                  condition:
-                    lambda: return id(overlay) == pixizhi::OVERLAY_NOTIFICATIONS;
-                  then:
-                    - script.execute: notif_fill
     - action: clear_notifications
       then:
         - lambda: |-
@@ -507,9 +501,11 @@ api:
               visible.push_back(key);
               bool known = std::find(id(plane_shown).begin(), id(plane_shown).end(), key) != id(plane_shown).end();
               if (!known && id(plane_spotting).state) {
+                id(plane_shown).push_back(key);
+                // Do Not Disturb and night mode skip the plane entirely instead of showing it late.
+                if (id(dnd).state || id(is_night)() || id(plane_queue).size() >= 8) continue;
                 // Stored as: model, callsign (shown as the flight code), airline, from, to, registration.
                 id(plane_queue).push_back({at(models, i), at(callsigns, i), at(airlines, i), at(origins, i), at(destinations, i), at(registrations, i)});
-                id(plane_shown).push_back(key);
               }
             }
             // Forget planes that left the view, so they show again if they return later.
@@ -517,6 +513,15 @@ api:
             for (auto &k : id(plane_shown))
               if (std::find(visible.begin(), visible.end(), k) != visible.end()) keep.push_back(k);
             id(plane_shown) = keep;
+            // Planes still waiting for the clock are dropped once they have left the view.
+            if (!id(plane_active)) {
+              auto &q = id(plane_queue);
+              q.erase(std::remove_if(q.begin(), q.end(), [&](const std::array<std::string, 6> &p) {
+                std::string key = p[1].empty() ? p[5] : p[1];
+                if (key.empty()) key = p[0] + p[3] + p[4];
+                return std::find(visible.begin(), visible.end(), key) == visible.end();
+              }), q.end());
+            }
     - action: clear_slot
       variables:
         slot: int
@@ -524,7 +529,6 @@ api:
         - lambda: |-
             if (slot < 0 || slot > 5) return;
             id(slot_eid)[slot] = "";
-            id(slot_pic)[slot] = "";
             id(slot_pending)[slot] = 0;
             id(slot_temp_due)[slot] = 0;
             id(slot_seen)[slot] = 0;
@@ -771,9 +775,6 @@ globals:
   - id: slot_artist
     type: std::vector<std::string>
     initial_value: std::vector<std::string>(6)
-  - id: slot_pic
-    type: std::vector<std::string>
-    initial_value: std::vector<std::string>(6)
   - id: slot_dimmable
     type: std::vector<bool>
     initial_value: std::vector<bool>(6, false)
@@ -804,9 +805,6 @@ globals:
   - id: slot_action
     type: std::vector<std::string>
     initial_value: std::vector<std::string>(6)
-  - id: slot_batt_low
-    type: std::vector<bool>
-    initial_value: std::vector<bool>(6, false)
   - id: pizza_sel
     type: int
     initial_value: "-1"
@@ -904,21 +902,6 @@ globals:
   - id: timer_done
     type: bool
     initial_value: "false"
-  - id: icon_map
-    type: std::map<std::string, const char *>
-    initial_value: |-
-      {
-        {"lightbulb", "\U000F0335"}, {"power", "\U000F0425"}, {"movie", "\U000F0FCE"},
-        {"night", "\U000F0594"}, {"bed", "\U000F02E3"}, {"sofa", "\U000F04B9"},
-        {"vacuum", "\U000F070D"}, {"fan", "\U000F0210"}, {"tv", "\U000F0502"},
-        {"music", "\U000F075A"}, {"lock", "\U000F033E"}, {"garage", "\U000F06D9"},
-        {"home", "\U000F02DC"}, {"fire", "\U000F0238"}, {"coffee", "\U000F0176"},
-        {"star", "\U000F04CE"}, {"bell", "\U000F009A"}, {"door", "\U000F081A"},
-        {"window", "\U000F05B1"}, {"washer", "\U000F072A"}, {"package", "\U000F03D7"},
-        {"battery", "\U000F0083"}, {"alert", "\U000F0026"}, {"info", "\U000F02FC"},
-        {"check", "\U000F05E0"}, {"water", "\U000F058C"}, {"mail", "\U000F06EE"},
-        {"timer", "\U000F051B"}
-      }
   - id: siren_prev_volume
     type: float
     initial_value: "0.5"
@@ -1073,10 +1056,18 @@ globals:
           s.art_w = id(artwork_img).get_width(); s.art_h = id(artwork_img).get_height();
           s.art_led = id(artwork_style).active_index().value_or(0) == 0;
         }
+        s.music_flash = (int32_t)(id(music_flash_until) - now) > 0 ? id(music_flash) : 0;
         int v = id(ui_view);
         s.screen = id(overlay) == pixizhi::OVERLAY_NOTIFICATIONS ? S_ALERTS : id(overlay) == pixizhi::OVERLAY_TIMER ? S_TIMER
             : v;
       }
+  # Player control just used (1 previous, 2 play/pause, 3 next), lit until music_flash_until.
+  - id: music_flash
+    type: int
+    initial_value: "0"
+  - id: music_flash_until
+    type: uint32_t
+    initial_value: "0"
   - id: art_ready
     type: bool
     initial_value: "false"
@@ -1100,12 +1091,6 @@ globals:
   - id: plane_prev_slot
     type: int
     initial_value: "-1"
-  - id: wheel_rgb
-    type: int
-    initial_value: "0xFFFFFF"
-  - id: loaded_pic
-    type: std::string
-    initial_value: '""'
   - id: ambient_lux
     type: float
     initial_value: "NAN"
@@ -1967,7 +1952,7 @@ touchscreen:
           float rx=touch.x-120.0f,ry=touch.y-120.0f;
           bool dial=id(gs_clock_origin);
           int s=id(cur_slot);
-          if(id(ui_view)==pixizhi::VIEW_SLOT && s>=0 && s<6 && id(slot_seen)[s]!=0 && (uint32_t)(millis()-id(slot_seen)[s])<45000 &&
+          if(id(ui_view)==pixizhi::VIEW_SLOT && s>=0 && s<6 && id(slot_seen)[s]!=0 && (uint32_t)(millis()-id(slot_seen)[s])<pixizhi::HA_STALE_MS &&
              id(slot_state)[s]!="unknown" && id(slot_state)[s]!="unavailable") {
             auto &e=id(slot_eid)[s];bool music=e.rfind("media_player.",0)==0,climate=e.rfind("climate.",0)==0;
             dial=(music&&(id(slot_features)[s]&4)) || (climate&&(id(slot_features)[s]&1)) || id(slot_dimmable)[s];
@@ -2050,7 +2035,7 @@ touchscreen:
           if(id(ui_view)==pixizhi::VIEW_STANDBY && !id(gs_clock_origin))return;
           int dx=id(gs_last_x)-id(gs_start_x),dy=id(gs_last_y)-id(gs_start_y);
           uint32_t dt=millis()-id(gs_start_ms);int ax=std::abs(dx),ay=std::abs(dy);
-          bool dashboard=id(ui_view)>0;
+          bool dashboard=id(ui_view)!=pixizhi::VIEW_STANDBY;
           if(dt<=1500&&(ax>=34||ay>=34)){
             // A rejected rim interaction is consumed, never converted into a swipe.
             int rx=id(gs_start_x)-120,ry=id(gs_start_y)-120;
@@ -2061,23 +2046,23 @@ touchscreen:
             int v=id(ui_view);
             if(v==pixizhi::VIEW_NOW_PLAYING){id(np_banner_end).execute();return;}
             if(ax>=ay){
-              if(v==5||v==9||v==10){int count=0;
-                if(v==5){for(int q=0;q<6;q++){auto &e=id(slot_eid)[q];if(id(ui_category)==0?(e.rfind("light.",0)==0||e.rfind("switch.",0)==0):e.rfind("media_player.",0)==0)count++;}}
-                else if(v==9||v==10){int s=id(cur_slot);if(s>=0&&s<6){std::string a=v==9?id(slot_modes)[s]+"|"+id(slot_presets)[s]:id(slot_sources)[s];for(char c:a)if(c=='|')count++;count+=v==9?1:4;}}
+              if(v==pixizhi::VIEW_CATEGORY_LIST||v==pixizhi::VIEW_CLIMATE_MODES||v==pixizhi::VIEW_MUSIC_OPTIONS){int count=0;
+                if(v==pixizhi::VIEW_CATEGORY_LIST){for(int q=0;q<6;q++){auto &e=id(slot_eid)[q];if(id(ui_category)==0?(e.rfind("light.",0)==0||e.rfind("switch.",0)==0):e.rfind("media_player.",0)==0)count++;}}
+                else if(v==pixizhi::VIEW_CLIMATE_MODES||v==pixizhi::VIEW_MUSIC_OPTIONS){int s=id(cur_slot);if(s>=0&&s<6){std::string a=v==pixizhi::VIEW_CLIMATE_MODES?id(slot_modes)[s]+"|"+id(slot_presets)[s]:id(slot_sources)[s];for(char c:a)if(c=='|')count++;count+=v==pixizhi::VIEW_CLIMATE_MODES?1:4;}}
                 int maxoff=std::max(0,((count-1)/3)*3);id(ui_list_offset)=std::max(0,std::min(maxoff,id(ui_list_offset)+(dx<0?3:-3)));id(ui_render).execute();
-              } else if(v==7){int q=id(ui_status_detail);id(ui_status_detail)=(q+(dx<0?1:5))%6;id(ui_render).execute();}
-              else if(v==2&&id(gs_start_y)>=124&&id(cur_slot)>=0&&id(cur_slot)<6&&id(slot_eid)[id(cur_slot)].rfind("media_player.",0)==0){
+              } else if(v==pixizhi::VIEW_STATUS_DETAIL){int q=id(ui_status_detail);id(ui_status_detail)=(q+(dx<0?1:5))%6;id(ui_render).execute();}
+              else if(v==pixizhi::VIEW_SLOT&&id(gs_start_y)>=124&&id(cur_slot)>=0&&id(cur_slot)<6&&id(slot_eid)[id(cur_slot)].rfind("media_player.",0)==0){
                 // lower half of the player screen: left = previous, right = next
                 int s=id(cur_slot),f=id(slot_features)[s];
-                if(dx<0&&(f&16))id(ui_command).execute(s,11,0,"media_previous_track");
-                else if(dx>0&&(f&32))id(ui_command).execute(s,11,0,"media_next_track");
+                if(dx<0&&(f&16)){id(music_flash)=1;id(music_flash_until)=millis()+600;id(ui_command).execute(s,11,0,"media_previous_track");}
+                else if(dx>0&&(f&32)){id(music_flash)=3;id(music_flash_until)=millis()+600;id(ui_command).execute(s,11,0,"media_next_track");}
               }
-              else if(v==0||v==2)id(ui_cycle).execute(dx<0?1:-1);
+              else if(v==pixizhi::VIEW_STANDBY||v==pixizhi::VIEW_SLOT)id(ui_cycle).execute(dx<0?1:-1);
             }else if(v==pixizhi::VIEW_PLANE)id(plane_end).execute();
             else if(dy>0){if(v==pixizhi::VIEW_STANDBY)id(ui_open).execute(pixizhi::VIEW_QUICK);else if(v!=pixizhi::VIEW_QUICK)id(ui_back).execute();}
             else if(v==pixizhi::VIEW_QUICK)id(ui_home).execute();
-            else if(v==0)id(ui_open).execute(pixizhi::VIEW_MORE);
-            else if(v==2){int s=id(cur_slot);if(s>=0&&s<6){auto &e=id(slot_eid)[s];if(e.rfind("climate.",0)==0)id(ui_open).execute(pixizhi::VIEW_CLIMATE_MODES);else if(e.rfind("media_player.",0)==0)id(ui_open).execute(pixizhi::VIEW_MUSIC_OPTIONS);else id(ui_colors_open).execute();}}
+            else if(v==pixizhi::VIEW_STANDBY)id(ui_open).execute(pixizhi::VIEW_MORE);
+            else if(v==pixizhi::VIEW_SLOT){int s=id(cur_slot);if(s>=0&&s<6){auto &e=id(slot_eid)[s];if(e.rfind("climate.",0)==0)id(ui_open).execute(pixizhi::VIEW_CLIMATE_MODES);else if(e.rfind("media_player.",0)==0)id(ui_open).execute(pixizhi::VIEW_MUSIC_OPTIONS);else id(ui_colors_open).execute();}}
             return;
           }
           if(id(gs_max_move)>16)return;
@@ -2167,7 +2152,7 @@ script:
     then:
       - lambda: |-
           if(id(overlay)!=pixizhi::OVERLAY_NONE || id(ui_view)==pixizhi::VIEW_MENU) {id(ui_home).execute();return;}
-          if(id(ui_view)==8 || id(ui_view)==pixizhi::VIEW_CLIMATE_MODES || id(ui_view)==pixizhi::VIEW_MUSIC_OPTIONS) {id(ui_open).execute(pixizhi::VIEW_SLOT);return;}
+          if(id(ui_view)==pixizhi::VIEW_COLORS || id(ui_view)==pixizhi::VIEW_CLIMATE_MODES || id(ui_view)==pixizhi::VIEW_MUSIC_OPTIONS) {id(ui_open).execute(pixizhi::VIEW_SLOT);return;}
           id(ui_open).execute(pixizhi::VIEW_MENU);
   - id: ui_category_open
     parameters:
@@ -2208,7 +2193,7 @@ script:
           condition:
             lambda: |-
               return id(ha_online)() && slot>=0 && slot<6 && !id(slot_eid)[slot].empty() && id(slot_seen)[slot]!=0 &&
-                (uint32_t)(millis()-id(slot_seen)[slot])<45000 &&
+                (uint32_t)(millis()-id(slot_seen)[slot])<pixizhi::HA_STALE_MS &&
                 id(slot_state)[slot]!="unavailable" && id(slot_state)[slot]!="unknown";
           then:
             - lambda: |-
@@ -2388,41 +2373,61 @@ script:
             if(y>=72&&y<=214){int col=x<90?0:x<150?1:2,row=y<144?0:1;id(quick_tile).execute(row*3+col);}
             return;
           }
-          const bool player=v==2&&s>=0&&s<6&&id(slot_eid)[s].rfind("media_player.",0)==0;
+          const bool player=v==pixizhi::VIEW_SLOT&&s>=0&&s<6&&id(slot_eid)[s].rfind("media_player.",0)==0;
           if(y>=207 && x>=91 && x<=149 && !player){id(ui_home).execute();return;}
-          if(v==1){if(y>=43&&y<=110)id(ui_category_open).execute(x<120?0:1);
+          if(v==pixizhi::VIEW_MENU){if(y>=43&&y<=110)id(ui_category_open).execute(x<120?0:1);
             else if(y>=116&&y<=187){if(x<120)id(ui_category_open).execute(2);else id(ui_open).execute(pixizhi::VIEW_MORE);}return;}
-          if(v==6){if(y>=52&&y<=112){if(x<120)id(open_notifications).execute();else id(open_timer).execute();}
+          if(v==pixizhi::VIEW_MORE){if(y>=52&&y<=112){if(x<120)id(open_notifications).execute();else id(open_timer).execute();}
             else if(y>=120&&y<=185){if(x<120)id(radial_open).execute();else id(ui_open).execute(pixizhi::VIEW_HEATING_HOME);}return;}
-          if(v==3){
+          if(v==pixizhi::VIEW_HEATING_HOME){
             if(y>=55&&y<92){id(ui_category_open).execute(0);return;}
             if(y>=92&&y<163){int n=(y-92)/31,r=0;for(int q=0;q<6;q++)if(id(slot_eid)[q].rfind("climate.",0)==0){if(r++==n){id(cur_slot)=q;id(show_current).execute();return;}}}
             if(y>=173&&y<207){int active=-1;for(int q=0;q<6;q++)if(id(status_active)[q]&&(active<0||id(status_priority)[q]>id(status_priority)[active]))active=q;if(active>=0){id(ui_status_detail)=active;id(ui_open).execute(pixizhi::VIEW_STATUS_DETAIL);}}return;
           }
-          if((v==4||v==5)&&y>=190&&y<=211){id(ui_list_offset)++;id(ui_scroll_ms)=millis();id(ui_render).execute();return;}
-          if(v==4||v==5){std::vector<int> rows;for(int q=0;q<6;q++){auto &e=id(slot_eid)[q];
-            bool match=v==4?e.rfind("climate.",0)==0:id(ui_category)==0?(e.rfind("light.",0)==0||e.rfind("switch.",0)==0):e.rfind("media_player.",0)==0;
+          if(v==pixizhi::VIEW_HEATING_LIST||v==pixizhi::VIEW_CATEGORY_LIST){std::vector<int> rows;for(int q=0;q<6;q++){auto &e=id(slot_eid)[q];
+            bool match=v==pixizhi::VIEW_HEATING_LIST?e.rfind("climate.",0)==0:id(ui_category)==0?(e.rfind("light.",0)==0||e.rfind("switch.",0)==0):e.rfind("media_player.",0)==0;
             if(match)rows.push_back(q);}
-            int r=(v==4?(y-55)/67:(y-55)/62)+id(ui_list_offset);
+            // Same clamp as the renderer, so the rows on screen are the rows that respond.
+            const int maxoff=std::max(0,(int)rows.size()-2);
+            id(ui_list_offset)=std::max(0,std::min(maxoff,id(ui_list_offset)));
+            if(y>=190&&y<=211){id(ui_list_offset)=std::min(maxoff,id(ui_list_offset)+1);id(ui_scroll_ms)=millis();id(ui_render).execute();return;}
+            int r=(v==pixizhi::VIEW_HEATING_LIST?(y-55)/67:(y-55)/62)+id(ui_list_offset);
             if(y>=58&&y<190&&r>=0&&r<(int)rows.size()){id(cur_slot)=rows[r];id(show_current).execute();}return;}
-          if(v==7){int q=id(ui_status_detail);if(q>=0&&q<6&&y>95&&y<205){for(int j=0;j<6;j++)if(!id(status_target)[q].empty()&&id(slot_eid)[j]==id(status_target)[q]){id(cur_slot)=j;id(show_current).execute();return;}id(ui_status_action).execute(q);}return;}
+          if(v==pixizhi::VIEW_STATUS_DETAIL){int q=id(ui_status_detail);if(q>=0&&q<6&&y>95&&y<205){for(int j=0;j<6;j++)if(!id(status_target)[q].empty()&&id(slot_eid)[j]==id(status_target)[q]){id(cur_slot)=j;id(show_current).execute();return;}id(ui_status_action).execute(q);}return;}
           if(s<0||s>=6)return;
-          if(id(slot_seen)[s]==0 || (uint32_t)(millis()-id(slot_seen)[s])>45000 || id(slot_state)[s]=="unavailable"||id(slot_state)[s]=="unknown") {id(ui_message)="HA UNAVAILABLE";id(ui_message_until)=millis()+2000;id(ui_render).execute();return;}
+          if(id(slot_seen)[s]==0 || (uint32_t)(millis()-id(slot_seen)[s])>pixizhi::HA_STALE_MS || id(slot_state)[s]=="unavailable"||id(slot_state)[s]=="unknown") {id(ui_message)="HA UNAVAILABLE";id(ui_message_until)=millis()+2000;id(ui_render).execute();return;}
           auto &e=id(slot_eid)[s];
-          if(v==9){std::vector<std::pair<std::string,bool>> choices;
+          if(v==pixizhi::VIEW_CLIMATE_MODES){std::vector<std::pair<std::string,bool>> choices;
             auto add=[&](std::string vals,bool preset){size_t start=0;while(start<vals.size()){size_t p=vals.find('|',start);auto a=vals.substr(start,p==std::string::npos?p:p-start);if(!a.empty())choices.push_back({a,preset});if(p==std::string::npos)break;start=p+1;}};
             add(id(slot_modes)[s],false);add(id(slot_presets)[s],true);
             int r=(y-59)/39+id(ui_list_offset);if(y>=59&&y<185&&r>=0&&r<(int)choices.size())id(ui_command).execute(s,choices[r].second?10:9,0,choices[r].first);return;}
-          if(v==10){id(ui_music_option).execute(x,y);return;}
-          if(v!=2)return;
+          if(v==pixizhi::VIEW_MUSIC_OPTIONS){id(ui_music_option).execute(x,y);return;}
+          if(v==pixizhi::VIEW_COLORS){
+            const int k=pixizhi::draw::swatch_at(x,y);
+            if(k>=0){const auto w=pixizhi::draw::swatch(k);
+              if(w.kelvin){if(id(slot_white)[s])id(ha_kelvin).execute(w.kelvin);}
+              else if(id(slot_color_capable)[s])id(ha_rgb).execute((int)w.rgb);}
+            return;
+          }
+          if(v!=pixizhi::VIEW_SLOT)return;
           if(e.rfind("light.",0)==0||e.rfind("switch.",0)==0) {
             if(y>=161&&y<=204){if(x<120){bool on=id(slot_pending)[s]==1?id(slot_expected)[s]>0:id(slot_state)[s]=="on";id(ui_command).execute(s,1,on?0:1,"");}
               else if(id(slot_color_capable)[s]||id(slot_white)[s])id(ui_colors_open).execute();}
           } else if(e.rfind("media_player.",0)==0){int f=id(slot_features)[s];
-            // lower half: double-tap plays/pauses; upper half opens the player options
+            // Lower half: tap a control, or double-tap anywhere to play/pause.
+            // Upper half opens the player options.
             static uint32_t last_tap=0;
-            if(y>=124){
-              if((uint32_t)(millis()-last_tap)<=400){last_tap=0;bool playing=id(slot_pending)[s]==5?id(slot_expected)[s]>0:id(slot_state)[s]=="playing";if((playing&&(f&1))||(!playing&&(f&(512|16384))))id(ui_command).execute(s,5,playing?0:1,"");}
+            auto flash=[&](int kind){id(music_flash)=kind;id(music_flash_until)=millis()+600;};
+            auto toggle=[&](){bool playing=id(slot_pending)[s]==5?id(slot_expected)[s]>0:id(slot_state)[s]=="playing";
+              if((playing&&(f&1))||(!playing&&(f&(512|16384)))){flash(2);id(ui_command).execute(s,5,playing?0:1,"");}};
+            int btn=-1;
+            if(y>=pixizhi::draw::MUSIC_BTN_TAP_Y0&&y<=pixizhi::draw::MUSIC_BTN_TAP_Y1)
+              for(int b=0;b<3;b++)if(std::abs(x-pixizhi::draw::MUSIC_BTN_X[b])<=pixizhi::draw::MUSIC_BTN_HALF_W)btn=b;
+            if(btn==1){last_tap=0;toggle();}
+            else if(btn==0&&(f&16)){last_tap=0;flash(1);id(ui_command).execute(s,11,0,"media_previous_track");}
+            else if(btn==2&&(f&32)){last_tap=0;flash(3);id(ui_command).execute(s,11,0,"media_next_track");}
+            else if(y>=124){
+              if((uint32_t)(millis()-last_tap)<=400){last_tap=0;toggle();}
               else last_tap=millis();
             }
             else if(y>=26){id(ui_open).execute(pixizhi::VIEW_MUSIC_OPTIONS);}
@@ -2435,26 +2440,8 @@ script:
   - id: ui_colors_open
     then:
       - lambda: |-
-          int s=id(cur_slot);if(s<0||s>=6)return;
-          id(ui_view)=0;
-          auto enable=[](lv_obj_t *o,bool on){if(on)lv_obj_remove_state(o,LV_STATE_DISABLED);else lv_obj_add_state(o,LV_STATE_DISABLED);};
-          enable(id(color_wheel),id(slot_color_capable)[s]);
-          enable(id(white_preset_0),id(slot_white)[s]);
-          enable(id(white_preset_1),id(slot_white)[s]);
-          enable(id(white_preset_2),id(slot_white)[s]);
-          enable(id(hue_preset_0),id(slot_color_capable)[s]);
-          enable(id(hue_preset_1),id(slot_color_capable)[s]);
-          enable(id(hue_preset_2),id(slot_color_capable)[s]);
-          enable(id(hue_preset_3),id(slot_color_capable)[s]);
-          enable(id(hue_preset_4),id(slot_color_capable)[s]);
-          enable(id(hue_preset_5),id(slot_color_capable)[s]);
-          enable(id(hue_preset_6),id(slot_color_capable)[s]);
-          enable(id(hue_preset_7),id(slot_color_capable)[s]);
-          enable(id(hue_preset_8),id(slot_color_capable)[s]);
-          enable(id(hue_preset_9),id(slot_color_capable)[s]);
-          enable(id(hue_preset_10),id(slot_color_capable)[s]);
-          enable(id(hue_preset_11),id(slot_color_capable)[s]);
-      - lvgl.page.show: colors_page
+          int s=id(cur_slot);if(s<0||s>=6||!(id(slot_color_capable)[s]||id(slot_white)[s]))return;
+          id(ui_open).execute(pixizhi::VIEW_COLORS);
   - id: ui_status_action
     parameters:
       slot: int
@@ -2494,7 +2481,6 @@ script:
           lv_obj_t *cv = id(overlay)==pixizhi::OVERLAY_NOTIFICATIONS ? id(notif_canvas) : id(overlay)==pixizhi::OVERLAY_TIMER ? id(timer_canvas)
               : id(ui_canvas);
           if (cv == nullptr) return;
-          if (!id(ui_ready)) return;
           lv_draw_buf_t *buf = lv_canvas_get_draw_buf(cv);
           if (buf == nullptr || buf->data == nullptr) return;
           const auto cf = buf->header.cf;
@@ -2552,16 +2538,6 @@ script:
             direction: !lambda |-
               return std::string(id(gs_turn) >= 0 ? "clockwise" : "counterclockwise");
             brightness: !lambda return esphome::to_string((int) roundf(id(gs_target_brightness) * 100));
-  - id: desk_play_pause
-    then:
-      - if:
-          condition:
-            lambda: return id(standby_player).rfind("media_player.", 0) == 0 && id(standby_state) == "playing";
-          then:
-            - homeassistant.action:
-                action: media_player.media_play_pause
-                data:
-                  entity_id: !lambda return id(standby_player);
   - id: pulse_swipe_left
     mode: restart
     then:
@@ -2658,8 +2634,8 @@ script:
             lv_obj_set_style_color_filter_opa(o, night ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
             for (uint32_t i=0;i<lv_obj_get_child_count(o);i++) self(self,lv_obj_get_child(o,i));
           };
-          lv_obj_t *roots[] = {id(standby_page)->obj,id(dashboard_page)->obj,id(colors_page)->obj,id(notif_page)->obj,id(timer_page)->obj,id(pairing_card)};
-          if(changed){for(auto *o:roots)tint(tint,o);id(draw_wheel).execute();}
+          lv_obj_t *roots[] = {id(standby_page)->obj,id(dashboard_page)->obj,id(notif_page)->obj,id(timer_page)->obj,id(pairing_card)};
+          if(changed){for(auto *o:roots)tint(tint,o);}
           id(apply_backlight).execute();
           id(draw_dot_clock).execute();
           id(ui_render).execute();
@@ -2744,7 +2720,7 @@ script:
           id(np_banner_title) = t;
           id(np_banner_artist) = a;
           id(np_banner_player) = player;
-          if (!id(now_playing_banner).state || !id(ui_ready) || id(is_night)() || id(plane_active) ||
+          if (!id(now_playing_banner).state || !id(ui_ready) || id(is_night)() || id(dnd).state || id(plane_active) ||
               id(overlay) != pixizhi::OVERLAY_NONE || id(siren_active) || id(setup_state) == 1 || id(setup_state) == 2 ||
               id(sendspin_pairing_visible)) return;
           const int v = id(ui_view);
@@ -2779,90 +2755,12 @@ script:
             - lambda: |-
                 if (id(np_banner_dimmed)) { id(bl_dimmed) = true; id(apply_backlight).execute(); }
 
-  - id: draw_wheel
-    then:
-      - lambda: |-
-          lv_obj_t *cv = id(color_wheel);
-          if (cv == nullptr) return;
-          lv_draw_buf_t *buf = lv_canvas_get_draw_buf(cv);
-          if (buf == nullptr || buf->data == nullptr) return;
-          const auto cf = buf->header.cf;
-          if (cf != LV_COLOR_FORMAT_RGB565 && cf != LV_COLOR_FORMAT_ARGB8888) return;
-          const int bw = static_cast<int>(buf->header.w), bh = static_cast<int>(buf->header.h);
-          const uint32_t stride = buf->header.stride;
-          const bool frame_night = id(is_night)();
-          auto put_pixel = [&](int x, int y, lv_color_t color, lv_opa_t alpha) {
-            if (x < 0 || y < 0 || x >= bw || y >= bh) return;
-            if (frame_night) color = lv_color_make(std::max({color.red,color.green,color.blue}),0,0);
-            uint8_t *row = buf->data + static_cast<size_t>(y) * stride;
-            if (cf == LV_COLOR_FORMAT_RGB565) {
-              const uint16_t rgb = ((uint16_t)(color.red >> 3) << 11) |
-                                   ((uint16_t)(color.green >> 2) << 5) | (color.blue >> 3);
-              memcpy(row + x * 2, &rgb, sizeof(rgb));
-            } else {
-              uint8_t *pixel = row + x * 4;
-              pixel[0] = color.blue; pixel[1] = color.green; pixel[2] = color.red; pixel[3] = alpha;
-            }
-          };
-
-          lv_canvas_fill_bg(cv, lv_color_hex(0x000000), LV_OPA_TRANSP);
-          const float R = 70.0f, C = 69.5f;
-          for (int y = 0; y < 140; y++) {
-            for (int x = 0; x < 140; x++) {
-              float dx = x - C, dy = y - C;
-              float r = sqrtf(dx * dx + dy * dy);
-              if (r > R) continue;
-              float hue = atan2f(dy, dx) * 57.29578f + 90.0f;
-              if (hue < 0) hue += 360.0f;
-              if (hue >= 360.0f) hue -= 360.0f;
-              lv_color_t c = lv_color_hsv_to_rgb((uint16_t) hue, (uint8_t) (r / R * 100.0f), 100);
-              lv_opa_t o = (r > R - 1.0f) ? (lv_opa_t) ((R - r) * 255.0f) : LV_OPA_COVER;
-              put_pixel(x, y, c, o);
-            }
-          }
-          lv_obj_invalidate(cv);
-
-  # Read the finger position on the wheel and preview the color
-
-  - id: wheel_pick
-    then:
-      - lambda: |-
-          lv_indev_t *indev = lv_indev_active();
-          if (indev == nullptr) return;
-          lv_point_t p;
-          lv_indev_get_point(indev, &p);
-          lv_area_t a;
-          lv_obj_get_coords(id(color_wheel), &a);
-          float dx = p.x - (a.x1 + 69.5f), dy = p.y - (a.y1 + 69.5f);
-          float r = sqrtf(dx * dx + dy * dy);
-          if (r > 70.0f) r = 70.0f;
-          float hue = atan2f(dy, dx) * 57.29578f + 90.0f;
-          if (hue < 0) hue += 360.0f;
-          if (hue >= 360.0f) hue -= 360.0f;
-          lv_color_t c = lv_color_hsv_to_rgb((uint16_t) hue, (uint8_t) (r / 70.0f * 100.0f), 100);
-          id(wheel_rgb) = (int) (lv_color_to_u32(c) & 0xFFFFFF);
-          lv_obj_set_style_bg_color(id(colors_close), c, LV_PART_MAIN);
-
-  # Advance: standby -> first picked screen -> ... -> last -> standby
-  - id: go_next
-    then:
-      - lambda: |-
-          int cur = id(cur_slot);
-          int next = -1;
-          if (cur < 6) {
-            for (int i = cur + 1; i < 6; i++) {
-              if (!id(slot_eid)[i].empty()) { next = i; break; }
-            }
-          }
-          id(cur_slot) = next;
-      - script.execute: show_current
-
   - id: show_current
     then:
       - lambda: id(clock_brightness_until) = 0;
       - lambda: |-
           id(overlay) = pixizhi::OVERLAY_NONE;
-          id(ui_view) = id(cur_slot) >= 0 && id(cur_slot) < 6 ? 2 : 0;
+          id(ui_view) = id(cur_slot) >= 0 && id(cur_slot) < 6 ? pixizhi::VIEW_SLOT : pixizhi::VIEW_STANDBY;
           id(ui_scroll_ms) = millis();
           id(ui_scroll_tick) = -1;
       - if:
@@ -2895,7 +2793,6 @@ script:
   - id: ha_kelvin
     parameters:
       kelvin: int
-      preview: int
     then:
       - script.execute:
           id: ui_command
@@ -3214,11 +3111,14 @@ script:
             id(timer_left) = left;
             id(timer_end_ms) = millis() + (uint32_t) left * 1000;
             id(timer_running) = true;
-          } else {
+          } else if ((uint32_t) now.timestamp - id(timer_end_epoch) <= 600) {
             // It expired while the device was off: ring now so it is not silently lost.
             id(timer_left) = 1;
             id(timer_end_ms) = millis();
             id(timer_running) = true;
+          } else {
+            // Expired long ago (device was off for a while): ringing now would only confuse.
+            id(timer_end_epoch) = 0;
           }
           id(timer_publish).execute();
 
@@ -3284,13 +3184,17 @@ script:
       - if:
           condition:
             lambda: |-
+              // Only over the clock or the song banner, never while a menu is open or a finger is down.
               return !id(plane_active) && !id(plane_queue).empty() && id(plane_spotting).state && id(ui_ready) &&
-                id(overlay) == pixizhi::OVERLAY_NONE && !(id(ui_view) == pixizhi::VIEW_STANDBY && id(cur_slot) >= 0 && id(cur_slot) < 6) &&
+                !id(dnd).state && !id(is_night)() && !id(gs_touch_active) && id(overlay) == pixizhi::OVERLAY_NONE &&
+                (id(ui_view) == pixizhi::VIEW_STANDBY || id(ui_view) == pixizhi::VIEW_NOW_PLAYING) && id(cur_slot) < 0 &&
                 !id(siren_active) && id(setup_state) != 1 && id(setup_state) != 2 && !id(sendspin_pairing_visible);
           then:
+            - script.stop: np_banner_timer
             - lambda: |-
-                id(plane_prev_view) = id(ui_view);
-                id(plane_prev_slot) = id(cur_slot);
+                // A replaced song banner is not restored: the plane returns to the clock.
+                id(plane_prev_view) = pixizhi::VIEW_STANDBY;
+                id(plane_prev_slot) = pixizhi::SLOT_NONE;
                 id(plane_active) = true;
                 id(plane_idx) = 0;
                 id(plane_start_ms) = millis();
@@ -3402,6 +3306,8 @@ script:
     then:
       - homeassistant.event:
           event: esphome.pixizhi_timer_done
+          data:
+            node: ${name}
       - script.execute: wake_screen
       - script.execute: open_timer
       - light.turn_on:
@@ -3622,6 +3528,7 @@ interval:
             }
           }
           if(id(ui_message_until) && (int32_t)(now-id(ui_message_until))>=0) {id(ui_message_until)=0;id(ui_message)="";repaint=true;}
+          if(id(music_flash) && (int32_t)(now-id(music_flash_until))>=0) {id(music_flash)=0;repaint=true;}
           if(id(ui_view)!=pixizhi::VIEW_STANDBY && id(overlay)==pixizhi::OVERLAY_NONE && !id(gs_touch_active)) {
             int tick=(now-id(ui_scroll_ms))/220;
             // Only redraw a changing marquee, not every idle page.
@@ -3987,306 +3894,6 @@ lvgl:
             transparent: false
             clickable: false
 
-    - id: colors_page
-      bg_color: 0x000000
-      scrollable: false
-      widgets:
-        - canvas:
-            id: color_wheel
-            align: CENTER
-            width: 140
-            height: 140
-            transparent: true
-            clickable: true
-            on_press:
-              - script.execute: wheel_pick
-            on_pressing:
-              - script.execute: wheel_pick
-            on_release:
-              - script.execute:
-                  id: ha_rgb
-                  rgb: !lambda return id(wheel_rgb);
-        - button:
-            id: colors_close
-            align: CENTER
-            width: 46
-            height: 46
-            radius: 23
-            bg_color: 0xFFFFFF
-            border_width: 2
-            border_color: 0x000000
-            shadow_width: 0
-            widgets:
-              - label:
-                  id: colors_close_icon
-                  align: CENTER
-                  text: "\uF00D"
-                  text_font: pixel_small
-                  text_color: 0x111111
-            on_click:
-              - lambda: id(ui_view) = 2;
-              - lvgl.page.show: dashboard_page
-              - script.execute: ui_render
-        - button:
-            id: white_preset_0
-            align: CENTER
-            x: 0
-            y: -52
-            width: 48
-            height: 48
-            radius: 24
-            bg_color: 0xFFB46B
-            border_width: 2
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            widgets:
-              - label:
-                  align: CENTER
-                  text: "WARM"
-                  text_font: pixel_small
-                  text_color: 0x111111
-            on_click:
-              - script.execute: { id: ha_kelvin, kelvin: 2700, preview: 0xFFB46B }
-        - button:
-            id: white_preset_1
-            align: CENTER
-            x: 45
-            y: 26
-            width: 48
-            height: 48
-            radius: 24
-            bg_color: 0xFFE2BD
-            border_width: 2
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            widgets:
-              - label:
-                  align: CENTER
-                  text: "NEUTRAL"
-                  text_font: pixel_small
-                  text_color: 0x111111
-            on_click:
-              - script.execute: { id: ha_kelvin, kelvin: 4000, preview: 0xFFE2BD }
-        - button:
-            id: white_preset_2
-            align: CENTER
-            x: -45
-            y: 26
-            width: 48
-            height: 48
-            radius: 24
-            bg_color: 0xE6EEFF
-            border_width: 2
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            widgets:
-              - label:
-                  align: CENTER
-                  text: "COOL"
-                  text_font: pixel_small
-                  text_color: 0x111111
-            on_click:
-              - script.execute: { id: ha_kelvin, kelvin: 6500, preview: 0xE6EEFF }
-        - button:
-            id: hue_preset_0
-            align: CENTER
-            x: 0
-            y: -104
-            width: 26
-            height: 26
-            radius: 13
-            bg_color: 0xFF2A2A
-            border_width: 1
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            on_click:
-              - script.execute: { id: ha_rgb, rgb: 0xFF2A2A }
-        - button:
-            id: hue_preset_1
-            align: CENTER
-            x: 52
-            y: -90
-            width: 26
-            height: 26
-            radius: 13
-            bg_color: 0xFF7A1A
-            border_width: 1
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            on_click:
-              - script.execute: { id: ha_rgb, rgb: 0xFF7A1A }
-        - button:
-            id: hue_preset_2
-            align: CENTER
-            x: 90
-            y: -52
-            width: 26
-            height: 26
-            radius: 13
-            bg_color: 0xFFE81A
-            border_width: 1
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            on_click:
-              - script.execute: { id: ha_rgb, rgb: 0xFFE81A }
-        - button:
-            id: hue_preset_3
-            align: CENTER
-            x: 104
-            y: 0
-            width: 26
-            height: 26
-            radius: 13
-            bg_color: 0xA8FF1A
-            border_width: 1
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            on_click:
-              - script.execute: { id: ha_rgb, rgb: 0xA8FF1A }
-        - button:
-            id: hue_preset_4
-            align: CENTER
-            x: 90
-            y: 52
-            width: 26
-            height: 26
-            radius: 13
-            bg_color: 0x2EE65C
-            border_width: 1
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            on_click:
-              - script.execute: { id: ha_rgb, rgb: 0x2EE65C }
-        - button:
-            id: hue_preset_5
-            align: CENTER
-            x: 52
-            y: 90
-            width: 26
-            height: 26
-            radius: 13
-            bg_color: 0x1AE6B0
-            border_width: 1
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            on_click:
-              - script.execute: { id: ha_rgb, rgb: 0x1AE6B0 }
-        - button:
-            id: hue_preset_6
-            align: CENTER
-            x: 0
-            y: 104
-            width: 26
-            height: 26
-            radius: 13
-            bg_color: 0x1AD9FF
-            border_width: 1
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            on_click:
-              - script.execute: { id: ha_rgb, rgb: 0x1AD9FF }
-        - button:
-            id: hue_preset_7
-            align: CENTER
-            x: -52
-            y: 90
-            width: 26
-            height: 26
-            radius: 13
-            bg_color: 0x2A5CFF
-            border_width: 1
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            on_click:
-              - script.execute: { id: ha_rgb, rgb: 0x2A5CFF }
-        - button:
-            id: hue_preset_8
-            align: CENTER
-            x: -90
-            y: 52
-            width: 26
-            height: 26
-            radius: 13
-            bg_color: 0x5A3AFF
-            border_width: 1
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            on_click:
-              - script.execute: { id: ha_rgb, rgb: 0x5A3AFF }
-        - button:
-            id: hue_preset_9
-            align: CENTER
-            x: -104
-            y: 0
-            width: 26
-            height: 26
-            radius: 13
-            bg_color: 0x9A3AFF
-            border_width: 1
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            on_click:
-              - script.execute: { id: ha_rgb, rgb: 0x9A3AFF }
-        - button:
-            id: hue_preset_10
-            align: CENTER
-            x: -90
-            y: -52
-            width: 26
-            height: 26
-            radius: 13
-            bg_color: 0xE62AE6
-            border_width: 1
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            on_click:
-              - script.execute: { id: ha_rgb, rgb: 0xE62AE6 }
-        - button:
-            id: hue_preset_11
-            align: CENTER
-            x: -52
-            y: -90
-            width: 26
-            height: 26
-            radius: 13
-            bg_color: 0xFF4FA0
-            border_width: 1
-            border_color: 0x000000
-            shadow_width: 0
-            pad_all: 0
-            ext_click_area: 4
-            on_click:
-              - script.execute: { id: ha_rgb, rgb: 0xFF4FA0 }
-
-    # ---------------- THERMOSTAT ----------------
     - id: notif_page
       bg_color: 0x000000
       scrollable: false

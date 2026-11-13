@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
   base.status[0] = {"Front Door", "door", "Open", "", true, 5};
 
   struct Shot { const char *name; int screen; };
-  const Shot shots[] = {{"clock", S_CLOCK}, {"menu", S_MENU}, {"quick", S_QUICK}, {"light", S_SLOT},
+  const Shot shots[] = {{"clock", S_CLOCK}, {"menu", S_MENU}, {"quick", S_QUICK}, {"light", S_SLOT}, {"colors", S_COLORS},
                         {"music", S_SLOT}, {"music-led", S_SLOT}, {"plane", S_PLANE}, {"plane-landing", S_PLANE}, {"forecast", S_FORECAST}, {"now-playing", S_NOW_PLAYING}, {"now-playing-led", S_NOW_PLAYING},
                         {"heating", S_HEAT_LIST}, {"thermostat", S_SLOT}, {"alerts", S_ALERTS}, {"timer", S_TIMER},
                         {"status", S_STATUS}, {"more", S_MORE}, {"actions", S_RADIAL}, {"lights", S_LIST}};
@@ -74,8 +74,8 @@ int main(int argc, char **argv) {
     s.screen = sh.screen;
     std::string n = sh.name;
     if (n == "clock") { s.music_line = true; s.music_title = "Midnight City"; }
-    if (n == "light") s.cur_slot = 0;
-    if (n == "music" || n == "music-led") { s.cur_slot = 2; s.art = art.data(); s.art_w = s.art_h = 104; s.art_led = n == "music-led"; s.progress = 0.42f; }
+    if (n == "light" || n == "colors") { s.cur_slot = 0; s.slots[0].white = true; }
+    if (n == "music" || n == "music-led") { s.cur_slot = 2; s.art = art.data(); s.art_w = s.art_h = 104; s.art_led = n == "music-led"; }
     if (n == "thermostat") s.cur_slot = 3;
     if (n == "quick") { s.q_brightness = 75; s.q_volume = 40; s.q_usb = true; }
     if (n == "plane" || n == "plane-landing") {

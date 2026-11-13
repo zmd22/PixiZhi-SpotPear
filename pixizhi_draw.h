@@ -152,7 +152,8 @@ static const Glyph FONT[] = {
     {'\'', 1, 2, {4, 4, 0, 0, 0, 0, 0}},       {'#', 5, 0, {10, 31, 10, 10, 31, 10, 0}},
     {'&', 5, 0, {12, 18, 20, 8, 21, 18, 13}},  {'=', 5, 0, {0, 0, 31, 0, 31, 0, 0}},
     {'_', 5, 0, {0, 0, 0, 0, 0, 0, 31}},       {'*', 5, 0, {0, 21, 14, 31, 14, 21, 0}},
-    {'|', 1, 2, {4, 4, 4, 4, 4, 4, 4}},        {'~', 5, 0, {0, 0, 8, 21, 2, 0, 0}},
+    {'|', 1, 2, {4, 4, 4, 4, 4, 4, 4}},        {'"', 3, 1, {10, 10, 0, 0, 0, 0, 0}},
+    {';', 2, 1, {0, 12, 12, 0, 12, 4, 8}},     {'~', 5, 0, {0, 0, 8, 21, 2, 0, 0}},
     {'@', 2, 1, {0, 0, 0, 12, 12, 0, 0}},  // middle dot (separator)
     {' ', 3, 0, {0, 0, 0, 0, 0, 0, 0}},
 };
@@ -173,11 +174,30 @@ inline std::string fold(const std::string &v) {
     if (c < 128) r += char(toupper(c));
     else if (c == 0xC2 && i + 1 < v.size() && uint8_t(v[i + 1]) == 0xB0) { r += '^'; ++i; }
     else if (c == 0xC2 && i + 1 < v.size() && uint8_t(v[i + 1]) == 0xB7) { r += '@'; ++i; }
+    else if (c == 0xC2 && i + 1 < v.size() && uint8_t(v[i + 1]) == 0xA0) { r += ' '; ++i; }
+    else if (c == 0xC2 && i + 1 < v.size() && (uint8_t(v[i + 1]) == 0xAB || uint8_t(v[i + 1]) == 0xBB)) { r += '"'; ++i; }
     else if (c == 0xC3 && i + 1 < v.size()) {
       uint8_t q = uint8_t(v[++i]) | 0x20;
       r += q >= 0xA0 && q <= 0xA5 ? 'A' : q == 0xA7 ? 'C' : q <= 0xAB ? 'E' : q <= 0xAF ? 'I' : q == 0xB1 ? 'N'
            : q <= 0xB6 ? 'O' : q == 0xBF ? 'S' : q <= 0xBC ? 'U' : 'Y';
+    } else if ((c == 0xC4 || c == 0xC5) && i + 1 < v.size()) {
+      // Latin Extended-A (U+0100..U+017F): base letters in code-point order.
+      static const char EXT_A[] = "AAAAAACCCCCCCCDDDDEEEEEEEEEEGGGGGGGGHHHHIIIIIIIIIIIIJJKKKLLLLLLLLLLNNNNNNNNNOOOOOOOORRRRRRSSSSSSSSTTTTTTUUUUUUUUUUUUWWYYYZZZZZZS";
+      const int cp = ((c & 0x1F) << 6) | (uint8_t(v[++i]) & 0x3F);
+      r += cp >= 0x100 && cp <= 0x17F ? EXT_A[cp - 0x100] : '?';
     } else if (c == 0xE2 && i + 2 < v.size() && uint8_t(v[i + 1]) == 0x86 && uint8_t(v[i + 2]) == 0x92) { r += '>'; i += 2; }
+    else if (c == 0xE2 && i + 2 < v.size() && uint8_t(v[i + 1]) == 0x80) {
+      // General punctuation: quotes, dashes, ellipsis, bullet, thin/narrow spaces.
+      const uint8_t q = uint8_t(v[i + 2]);
+      i += 2;
+      if (q == 0x98 || q == 0x99 || q == 0x9A || q == 0x9B || q == 0xB2) r += '\'';
+      else if (q == 0x9C || q == 0x9D || q == 0x9E || q == 0x9F || q == 0xB3) r += '"';
+      else if (q >= 0x90 && q <= 0x95) r += '-';
+      else if (q == 0xA6) r += "...";
+      else if (q == 0xA2) r += '@';
+      else if (q <= 0x8F || q == 0xAF) r += ' ';
+      else r += '?';
+    }
     else {
       r += '?';
       while (i + 1 < v.size() && (uint8_t(v[i + 1]) & 0xC0) == 0x80) ++i;
@@ -355,7 +375,7 @@ inline void dial(Canvas &cv, float fraction, Rgb on) {
 // ---------------------------------------------------------------- state
 enum Screen {
   S_CLOCK = 0, S_MENU = 1, S_SLOT = 2, S_HOME = 3, S_HEAT_LIST = 4, S_LIST = 5, S_MORE = 6, S_STATUS = 7,
-  S_MODES = 9, S_MUSIC_OPT = 10, S_ALERTS = 11, S_TIMER = 12, S_QUICK = 14, S_PLANE = 15, S_FORECAST = 16, S_NOW_PLAYING = 17, S_RADIAL = 18,
+  S_COLORS = 8, S_MODES = 9, S_MUSIC_OPT = 10, S_ALERTS = 11, S_TIMER = 12, S_QUICK = 14, S_PLANE = 15, S_FORECAST = 16, S_NOW_PLAYING = 17, S_RADIAL = 18,
 };
 
 struct SlotView {
@@ -442,7 +462,7 @@ struct UiState {
   const uint8_t *art = nullptr;
   int art_w = 0, art_h = 0;
   bool art_led = true;
-  float progress = -1;  // 0..1 track progress, -1 unknown
+  int music_flash = 0;  // control just used on the player screen: 1 previous, 2 play/pause, 3 next
 };
 
 // Why HA counts as offline: no Wi-Fi, no API link, or linked but the blueprint sends nothing.
@@ -641,39 +661,6 @@ inline void draw_options(Canvas &cv, const UiState &s, const char *title, const 
   footer(cv, s);
 }
 
-inline void draw_artwork(Canvas &cv, const UiState &s, int cx, int y, int size) {
-  if (s.art == nullptr || s.art_w <= 0) return;
-  auto px = [&](int x, int yy) -> Rgb {
-    uint16_t v;
-    memcpy(&v, s.art + (size_t(yy) * s.art_w + x) * 2, 2);
-    return Rgb{uint8_t((v >> 11) << 3), uint8_t(((v >> 5) & 63) << 2), uint8_t((v & 31) << 3)};
-  };
-  if (s.art_led) {
-    const int n = 22;
-    const float pitch = float(size) / n;
-    for (int j = 0; j < n; j++)
-      for (int i = 0; i < n; i++) {
-        // average the source block for each LED
-        int sx0 = i * s.art_w / n, sx1 = std::max(sx0 + 1, (i + 1) * s.art_w / n);
-        int sy0 = j * s.art_h / n, sy1 = std::max(sy0 + 1, (j + 1) * s.art_h / n);
-        uint32_t r = 0, g = 0, b = 0, c = 0;
-        for (int yy = sy0; yy < sy1; yy += 2)
-          for (int xx = sx0; xx < sx1; xx += 2) { Rgb p = px(xx, yy); r += p.r; g += p.g; b += p.b; c++; }
-        Rgb avg{uint8_t(r / c), uint8_t(g / c), uint8_t(b / c)};
-        led(cv, cx - size / 2.0f + i * pitch + pitch / 2, y + j * pitch + pitch / 2, pitch, avg, false);
-      }
-  } else {
-    // full artwork, nearest-neighbour scaled, with rounded corners
-    const int r = 10;
-    for (int yy = 0; yy < size; yy++)
-      for (int xx = 0; xx < size; xx++) {
-        int dx = std::max({0, r - xx, xx - (size - 1 - r)}), dy = std::max({0, r - yy, yy - (size - 1 - r)});
-        if (dx * dx + dy * dy > r * r) continue;
-        cv.blit_rgb(cx - size / 2 + xx, y + yy, px(xx * s.art_w / size, yy * s.art_h / size));
-      }
-  }
-}
-
 // Sample the RGB565 artwork at normalised coordinates (0..1).
 inline Rgb art_at(const UiState &s, float u, float v) {
   const int x = std::min(s.art_w - 1, std::max(0, int(u * s.art_w))), y = std::min(s.art_h - 1, std::max(0, int(v * s.art_h)));
@@ -716,6 +703,66 @@ inline void music_hero(Canvas &cv, const UiState &s, const std::string &title, c
   text(cv, player, 120, 197, 1.6f, GREY, 120);
 }
 
+// Player transport controls: icon centres and top edge. A tap within
+// MUSIC_BTN_HALF_W of a centre and inside the MUSIC_BTN_TAP_* band counts.
+constexpr int MUSIC_BTN_X[3] = {80, 120, 160};
+constexpr int MUSIC_BTN_Y = 177, MUSIC_BTN_HALF_W = 19, MUSIC_BTN_TAP_Y0 = 170, MUSIC_BTN_TAP_Y1 = 196;
+
+// Colour picker: 15 saturated hues on an open ring (gap at the bottom for the
+// home icon), 8 pastels inside it and three white temperatures in the middle.
+constexpr int SWATCH_HUES = 15, SWATCH_PASTELS = 8, SWATCH_WHITES = 3;
+constexpr int SWATCH_COUNT = SWATCH_HUES + SWATCH_PASTELS + SWATCH_WHITES;
+struct Swatch {
+  float x, y, pitch;
+  uint32_t rgb;
+  int kelvin;  // 0 for a colour, otherwise a white temperature
+};
+inline uint32_t hsv_rgb(float h, float sat) {
+  h = fmodf(h, 360.0f);
+  const float c = sat, x = c * (1 - fabsf(fmodf(h / 60.0f, 2.0f) - 1)), m = 1 - c;
+  float r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; } else if (h < 180) { g = c; b = x; }
+  else if (h < 240) { g = x; b = c; } else if (h < 300) { r = x; b = c; } else { r = c; b = x; }
+  return (uint32_t(roundf((r + m) * 255)) << 16) | (uint32_t(roundf((g + m) * 255)) << 8) | uint32_t(roundf((b + m) * 255));
+}
+inline Swatch swatch(int i) {
+  if (i < SWATCH_HUES) {
+    const float a = (135.0f + i * 270.0f / (SWATCH_HUES - 1)) * 0.0174532925f;
+    return Swatch{120 + cosf(a) * 96, 120 + sinf(a) * 96, 22, hsv_rgb(i * 360.0f / SWATCH_HUES, 1.0f), 0};
+  }
+  i -= SWATCH_HUES;
+  if (i < SWATCH_PASTELS) {
+    const float a = (-90.0f + i * 360.0f / SWATCH_PASTELS) * 0.0174532925f;
+    return Swatch{120 + cosf(a) * 58, 120 + sinf(a) * 58, 18, hsv_rgb(i * 360.0f / SWATCH_PASTELS, 0.5f), 0};
+  }
+  i -= SWATCH_PASTELS;
+  static const uint32_t WHITES[SWATCH_WHITES] = {0xFFB46B, 0xFFE2BD, 0xE6EEFF};
+  static const int KELVIN[SWATCH_WHITES] = {2700, 4000, 6500};
+  return Swatch{94.0f + i * 26, 120, 18, WHITES[i], KELVIN[i]};
+}
+// Swatch under a point, or -1.
+inline int swatch_at(int px, int py) {
+  int best = -1;
+  float best_d = 1e9f;
+  for (int i = 0; i < SWATCH_COUNT; i++) {
+    const Swatch w = swatch(i);
+    const float dx = px - w.x, dy = py - w.y, d = dx * dx + dy * dy, reach = w.pitch * 0.42f + 6;
+    if (d <= reach * reach && d < best_d) { best = i; best_d = d; }
+  }
+  return best;
+}
+
+inline void draw_colors(Canvas &cv, const UiState &s) {
+  if (s.cur_slot < 0 || s.cur_slot >= 6) { footer(cv, s); return; }
+  const auto &q = s.slots[s.cur_slot];
+  for (int i = 0; i < SWATCH_COUNT; i++) {
+    const Swatch w = swatch(i);
+    const bool on = q.available && (w.kelvin ? q.white : q.color);
+    led(cv, w.x, w.y, w.pitch, on ? rgb(w.rgb) : GHOST, on);
+  }
+  footer(cv, s);
+}
+
 inline void draw_slot(Canvas &cv, const UiState &s) {
   if (s.cur_slot < 0 || s.cur_slot >= 6) return;
   const auto &q = s.slots[s.cur_slot];
@@ -736,6 +783,10 @@ inline void draw_slot(Canvas &cv, const UiState &s) {
     float vol = s.dragging ? s.dial_value : q.pending == 3 ? q.expected : q.vol * 100;
     bool playing = q.pending == 5 ? q.expected > 0 : q.state == "playing";
     music_hero(cv, s, q.title.empty() ? q.state : q.title, q.artist, q.label, playing ? 1.0f : 0.45f);
+    // Small transport controls (tap targets, see MUSIC_BTN_*); the one just used lights up.
+    if (q.features & 16) icon(cv, "prev", MUSIC_BTN_X[0], MUSIC_BTN_Y, 1.6f, s.music_flash == 1 ? a : GREY);
+    icon(cv, playing ? "pause" : "play", MUSIC_BTN_X[1], MUSIC_BTN_Y, 1.6f, s.music_flash == 2 ? a : LIGHT);
+    if (q.features & 32) icon(cv, "next", MUSIC_BTN_X[2], MUSIC_BTN_Y, 1.6f, s.music_flash == 3 ? a : GREY);
     edge_ring(cv, vol / 100, a, 60, 115, 3.6f);
   } else {
     float target = s.dragging ? s.dial_value : q.pending == 4 ? q.expected : q.ttarget;
@@ -947,6 +998,7 @@ inline void draw_frame(Canvas &cv, UiState &s) {
       break;
     case S_STATUS: draw_status(cv, s); break;
     case S_SLOT: draw_slot(cv, s); break;
+    case S_COLORS: draw_colors(cv, s); break;
     case S_MODES: {
       std::vector<std::string> c;
       if (s.cur_slot >= 0 && s.cur_slot < 6) { c = split_bar(s.slots[s.cur_slot].modes); auto p = split_bar(s.slots[s.cur_slot].presets); c.insert(c.end(), p.begin(), p.end()); }

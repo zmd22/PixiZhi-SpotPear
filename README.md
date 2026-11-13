@@ -1,6 +1,6 @@
 # PixiZhi SpotPear
 
-**1.1.3 · ESPHome firmware and Home Assistant blueprints for the Spotpear Ball v2**
+**1.1.4 · ESPHome firmware and Home Assistant blueprints for the Spotpear Ball v2**
 
 A bold pixel interface for a small round desktop display: clock, home controls,
 music, thermostats, status, notifications, timer, and four quick actions.
@@ -14,7 +14,7 @@ red pixel colours; the physical brightness setting is not simulated.*
 ## Features
 
 - Pixel clock with weather/status rotation, temperature/humidity, and optional
-  playing-track information. No alternate smooth clock or clock-style selector.
+  playing-track information.
 - Up to six favourite light, switch, media-player, or thermostat controls.
   Larger category lists scroll vertically and show a V hint when more are below.
 - Touch controls and rim gestures for brightness, volume, and temperature.
@@ -86,6 +86,10 @@ your own `ota:`/`wifi:` settings; see [configuration notes](docs/CONFIGURATION.m
   to the clock. On regular control pages, centre swipes navigate or go back.
 - Turn the outer rim on the clock for brightness, on music controls for volume,
   and on thermostats for target temperature. Keep navigation swipes in the centre.
+- Player: tap the small previous / play-pause / next controls, swipe left/right
+  in the lower half, or double-tap to play/pause. Tap the artwork for options.
+- Lights: the palette button (or a swipe up) opens the colour picker; tap a
+  colour or one of the three whites, swipe down to go back.
 - Notifications: swipe vertically through a long message, tap to dismiss a normal
   alert, or hold for one second to dismiss an urgent alert.
 - Timer: tap −/+ to set minutes, then START. PAUSE/RESUME controls playback of the
@@ -100,12 +104,13 @@ your own `ota:`/`wifi:` settings; see [configuration notes](docs/CONFIGURATION.m
 See [configuration](docs/CONFIGURATION.md), [audio and pairing](docs/AUDIO.md),
 and [validation notes](docs/VALIDATION.md).
 
-## Development status
+## Development
 
-1.0.0 introduces the public, credential-free firmware with GitHub release updates.
-It compiles with ESPHome 2026.11.0-dev and passes host tests of the shared helpers.
-Touch wake from deep standby, the setup flow and the update path should be
-confirmed on hardware before the release is published.
+Releases are built by GitHub Actions against a pinned ESPHome 2026.11.0-dev
+commit. Every push also runs the host tests (`tests/test_helpers.cpp`), the
+public-source check and an ESPHome config validation. The screenshots are
+produced by the firmware's drawing code: `python3 tools/build_docs_images.py`.
+Problems and ideas are welcome in the repository's issues.
 
 ## Credits and licensing
 
