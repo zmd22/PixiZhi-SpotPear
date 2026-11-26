@@ -88,8 +88,9 @@ your own `ota:`/`wifi:` settings; see [configuration notes](docs/CONFIGURATION.m
   and on thermostats for target temperature. Keep navigation swipes in the centre.
 - Player: tap the small previous / play-pause / next controls, swipe left/right
   in the lower half, or double-tap to play/pause. Tap the artwork for options.
-- Lights: the palette button (or a swipe up) opens the colour picker; tap a
-  colour or one of the three whites, swipe down to go back.
+- Lights: the palette button (or a swipe up) opens the colour wheel; tap a
+  colour (pale towards the middle, saturated at the rim) or one of the three
+  whites in the centre, swipe down to go back.
 - Notifications: swipe vertically through a long message, tap to dismiss a normal
   alert, or hold for one second to dismiss an urgent alert.
 - Timer: tap −/+ to set minutes, then START. PAUSE/RESUME controls playback of the

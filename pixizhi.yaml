@@ -150,7 +150,9 @@ http_request:
   buffer_size_rx: 2048
   buffer_size_tx: 2048
   useragent: PixiZhi-SpotPear
-  timeout: 10s
+  # Generous: a firmware download that pauses for a few seconds on a busy
+  # network must not be abandoned (10 s made 1.1.4 updates fail part-way).
+  timeout: 60s
 
 # Encryption without a compiled key: Home Assistant generates and stores a key
 # for this device when it is added, so every installation has its own key.
@@ -2403,10 +2405,9 @@ script:
             int r=(y-59)/39+id(ui_list_offset);if(y>=59&&y<185&&r>=0&&r<(int)choices.size())id(ui_command).execute(s,choices[r].second?10:9,0,choices[r].first);return;}
           if(v==pixizhi::VIEW_MUSIC_OPTIONS){id(ui_music_option).execute(x,y);return;}
           if(v==pixizhi::VIEW_COLORS){
-            const int k=pixizhi::draw::swatch_at(x,y);
-            if(k>=0){const auto w=pixizhi::draw::swatch(k);
-              if(w.kelvin){if(id(slot_white)[s])id(ha_kelvin).execute(w.kelvin);}
-              else if(id(slot_color_capable)[s])id(ha_rgb).execute((int)w.rgb);}
+            const auto k=pixizhi::draw::color_pick(x,y);
+            if(k.kind==2){if(id(slot_white)[s])id(ha_kelvin).execute(k.kelvin);}
+            else if(k.kind==1&&id(slot_color_capable)[s])id(ha_rgb).execute((int)k.rgb);
             return;
           }
           if(v!=pixizhi::VIEW_SLOT)return;

@@ -708,15 +708,15 @@ inline void music_hero(Canvas &cv, const UiState &s, const std::string &title, c
 constexpr int MUSIC_BTN_X[3] = {80, 120, 160};
 constexpr int MUSIC_BTN_Y = 177, MUSIC_BTN_HALF_W = 19, MUSIC_BTN_TAP_Y0 = 170, MUSIC_BTN_TAP_Y1 = 196;
 
-// Colour picker: 15 saturated hues on an open ring (gap at the bottom for the
-// home icon), 8 pastels inside it and three white temperatures in the middle.
-constexpr int SWATCH_HUES = 15, SWATCH_PASTELS = 8, SWATCH_WHITES = 3;
-constexpr int SWATCH_COUNT = SWATCH_HUES + SWATCH_PASTELS + SWATCH_WHITES;
-struct Swatch {
-  float x, y, pitch;
-  uint32_t rgb;
-  int kelvin;  // 0 for a colour, otherwise a white temperature
-};
+// Colour picker: a round wheel of soft LEDs in concentric rings (hue around,
+// saturation outwards) with a small notch at the bottom for the home icon, and
+// three white temperatures in a triangle in the middle. The hue starts and ends
+// with red at the notch, so there is no visible seam. Drawn in true colours,
+// also in night mode.
+constexpr float WHEEL_IN = 46, WHEEL_OUT = 106, WHEEL_PITCH = 8.6f;
+constexpr float HOME_X = 120, HOME_Y = 210, HOME_CLEAR = 31;  // notch around the home icon
+constexpr float WHITE_R = 21, WHITE_PITCH = 19;
+constexpr int WHITE_COUNT = 3;
 inline uint32_t hsv_rgb(float h, float sat) {
   h = fmodf(h, 360.0f);
   const float c = sat, x = c * (1 - fabsf(fmodf(h / 60.0f, 2.0f) - 1)), m = 1 - c;
@@ -725,41 +725,74 @@ inline uint32_t hsv_rgb(float h, float sat) {
   else if (h < 240) { g = x; b = c; } else if (h < 300) { r = x; b = c; } else { r = c; b = x; }
   return (uint32_t(roundf((r + m) * 255)) << 16) | (uint32_t(roundf((g + m) * 255)) << 8) | uint32_t(roundf((b + m) * 255));
 }
-inline Swatch swatch(int i) {
-  if (i < SWATCH_HUES) {
-    const float a = (135.0f + i * 270.0f / (SWATCH_HUES - 1)) * 0.0174532925f;
-    return Swatch{120 + cosf(a) * 96, 120 + sinf(a) * 96, 22, hsv_rgb(i * 360.0f / SWATCH_HUES, 1.0f), 0};
-  }
-  i -= SWATCH_HUES;
-  if (i < SWATCH_PASTELS) {
-    const float a = (-90.0f + i * 360.0f / SWATCH_PASTELS) * 0.0174532925f;
-    return Swatch{120 + cosf(a) * 58, 120 + sinf(a) * 58, 18, hsv_rgb(i * 360.0f / SWATCH_PASTELS, 0.5f), 0};
-  }
-  i -= SWATCH_PASTELS;
-  static const uint32_t WHITES[SWATCH_WHITES] = {0xFFB46B, 0xFFE2BD, 0xE6EEFF};
-  static const int KELVIN[SWATCH_WHITES] = {2700, 4000, 6500};
-  return Swatch{94.0f + i * 26, 120, 18, WHITES[i], KELVIN[i]};
+struct WhiteDot {
+  float x, y;
+  uint32_t rgb;
+  int kelvin;
+};
+// Warm at the bottom left, neutral at the top, cool at the bottom right.
+inline WhiteDot white_dot(int i) {
+  static const uint32_t RGB[WHITE_COUNT] = {0xFFB46B, 0xFFE2BD, 0xE6EEFF};
+  static const int KELVIN[WHITE_COUNT] = {2700, 4000, 6500};
+  static const float ANGLE[WHITE_COUNT] = {150, 270, 30};  // degrees, screen coordinates
+  const float a = ANGLE[i] * 0.0174532925f;
+  return WhiteDot{120 + cosf(a) * WHITE_R, 120 + sinf(a) * WHITE_R, RGB[i], KELVIN[i]};
 }
-// Swatch under a point, or -1.
-inline int swatch_at(int px, int py) {
-  int best = -1;
-  float best_d = 1e9f;
-  for (int i = 0; i < SWATCH_COUNT; i++) {
-    const Swatch w = swatch(i);
-    const float dx = px - w.x, dy = py - w.y, d = dx * dx + dy * dy, reach = w.pitch * 0.42f + 6;
-    if (d <= reach * reach && d < best_d) { best = i; best_d = d; }
+// Colour of the wheel at a point; false outside the wheel or in the notch.
+inline bool wheel_color(float px, float py, uint32_t &out, float slack = 0) {
+  const float dx = px - 120, dy = py - 120, d = sqrtf(dx * dx + dy * dy);
+  if (d < WHEEL_IN - slack || d > WHEEL_OUT + slack) return false;
+  const float hx = px - HOME_X, hy = py - HOME_Y;
+  if (hx * hx + hy * hy < HOME_CLEAR * HOME_CLEAR) return false;
+  float a = atan2f(-dx, dy) * 57.2957795f;  // 0 at the bottom, clockwise
+  if (a < 0) a += 360;
+  const float sat = 0.2f + 0.8f * std::min(1.0f, std::max(0.0f, (d - WHEEL_IN) / (WHEEL_OUT - WHEEL_IN)));
+  out = hsv_rgb(a, sat);
+  return true;
+}
+// What a tap picks: 0 nothing, 1 a colour (rgb), 2 a white (kelvin).
+struct ColorPick {
+  int kind = 0;
+  uint32_t rgb = 0;
+  int kelvin = 0;
+};
+inline ColorPick color_pick(int px, int py) {
+  ColorPick p;
+  for (int i = 0; i < WHITE_COUNT; i++) {
+    const WhiteDot w = white_dot(i);
+    const float dx = px - w.x, dy = py - w.y;
+    if (dx * dx + dy * dy <= 13 * 13) { p.kind = 2; p.rgb = w.rgb; p.kelvin = w.kelvin; return p; }
   }
-  return best;
+  if (wheel_color(px, py, p.rgb, 6)) p.kind = 1;
+  return p;
 }
 
 inline void draw_colors(Canvas &cv, const UiState &s) {
   if (s.cur_slot < 0 || s.cur_slot >= 6) { footer(cv, s); return; }
   const auto &q = s.slots[s.cur_slot];
-  for (int i = 0; i < SWATCH_COUNT; i++) {
-    const Swatch w = swatch(i);
-    const bool on = q.available && (w.kelvin ? q.white : q.color);
-    led(cv, w.x, w.y, w.pitch, on ? rgb(w.rgb) : GHOST, on);
+  // A colour picker has to show the real colours, so the night tint is lifted
+  // for lit LEDs only; unavailable (ghost) LEDs and the home icon stay red.
+  const bool night = cv.night;
+  const bool colors = q.available && q.color, whites = q.available && q.white;
+  const int rings = int(roundf((WHEEL_OUT - WHEEL_IN) / WHEEL_PITCH));
+  for (int k = 0; k <= rings; k++) {
+    const float r = WHEEL_IN + k * (WHEEL_OUT - WHEEL_IN) / rings;
+    const int n = int(roundf(2 * 3.14159265f * r / WHEEL_PITCH));
+    for (int j = 0; j < n; j++) {
+      const float a = (j + 0.5f * (k & 1)) * 2 * 3.14159265f / n;
+      const float x = 120 + cosf(a) * r, y = 120 + sinf(a) * r;
+      uint32_t c;
+      if (!wheel_color(x, y, c)) continue;
+      cv.night = night && !colors;
+      led(cv, x, y, WHEEL_PITCH, colors ? rgb(c) : GHOST, colors);
+    }
   }
+  for (int i = 0; i < WHITE_COUNT; i++) {
+    const WhiteDot w = white_dot(i);
+    cv.night = night && !whites;
+    led(cv, w.x, w.y, WHITE_PITCH, whites ? rgb(w.rgb) : GHOST, false);
+  }
+  cv.night = night;
   footer(cv, s);
 }
 

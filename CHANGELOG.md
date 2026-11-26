@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Colour picker is now a colour wheel: hue around the ring, pale towards the
+  middle and saturated at the rim, so any colour can be picked, not only 23
+  presets. The three white temperatures sit in a triangle in the centre. No text.
+- Night mode no longer turns the colour picker red; the colours are shown as
+  they are (the home icon and unavailable lights stay red).
+- Firmware updates no longer give up when the download pauses for more than
+  10 seconds: the HTTP timeout is now 60 seconds. 1.1.4 updates could stop
+  part-way with "FAILED / Old firmware kept" on a busy network. This applies to
+  updates made from this version on.
+
 ## 1.1.4
 
 Update the firmware first, then re-import the screens blueprint: the new

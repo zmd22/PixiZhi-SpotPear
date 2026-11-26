@@ -73,16 +73,27 @@ static void test_fold() {
   CHECK(fold("\xC5") == "?");                                               // truncated sequence does not overrun
 }
 
-static void test_swatches() {
+static void test_color_wheel() {
   using namespace draw;
-  for (int i = 0; i < SWATCH_COUNT; i++) {
-    const Swatch w = swatch(i);
-    CHECK(swatch_at(int(roundf(w.x)), int(roundf(w.y))) == i);  // every swatch can be hit at its centre
-    const float dx = w.x - 120, dy = w.y - 120;
-    CHECK(dx * dx + dy * dy < 116 * 116);                        // and sits inside the round screen
-    CHECK((w.kelvin != 0) == (i >= SWATCH_HUES + SWATCH_PASTELS));
+  for (int i = 0; i < WHITE_COUNT; i++) {
+    const WhiteDot w = white_dot(i);
+    const ColorPick p = color_pick(int(roundf(w.x)), int(roundf(w.y)));
+    CHECK(p.kind == 2 && p.kelvin == w.kelvin);  // every white can be hit at its centre
   }
-  CHECK(swatch_at(120, 210) == -1);  // the home icon stays free
+  CHECK(color_pick(120, 210).kind == 0);           // the home icon stays free
+  CHECK(color_pick(120, 120 - 104).kind == 1);     // the rim is a colour
+  uint32_t c = 0;
+  CHECK(wheel_color(120, 120 - WHEEL_OUT, c));
+  CHECK(!wheel_color(HOME_X, HOME_Y - 12, c));     // the notch around the home icon
+  CHECK(wheel_color(120, 120 + 50, c));            // but the wheel is otherwise round
+  CHECK(!wheel_color(120, 120 - 30, c));           // the middle belongs to the whites
+  // Both sides of the notch are red, so the hue has no jump.
+  const float a = 115 * 0.0174532925f, b = 65 * 0.0174532925f;
+  uint32_t l = 0, r = 0;
+  CHECK(wheel_color(120 + cosf(a) * WHEEL_OUT * 0.95f, 120 + sinf(a) * WHEEL_OUT * 0.95f, l));
+  CHECK(wheel_color(120 + cosf(b) * WHEEL_OUT * 0.95f, 120 + sinf(b) * WHEEL_OUT * 0.95f, r));
+  CHECK((l >> 16) > 0xE0 && (r >> 16) > 0xE0);
+  CHECK(WHEEL_OUT + WHEEL_PITCH * 0.42f < 116);    // the wheel sits inside the round screen
   CHECK(hsv_rgb(0, 1) == 0xFF0000 && hsv_rgb(120, 1) == 0x00FF00 && hsv_rgb(240, 1) == 0x0000FF);
 }
 
@@ -111,6 +122,18 @@ static void test_render() {
           CHECK(red_only);
         }
       }
+  // Night mode tints everything red except a usable colour picker.
+  {
+    UiState s;
+    s.screen = S_COLORS; s.cur_slot = 0;
+    s.slots[0].eid = "light.a"; s.slots[0].available = true; s.slots[0].color = true; s.slots[0].white = true;
+    cv.night = true;
+    draw_frame(cv, s);
+    bool colourful = false;
+    for (int i = 0; i < 240 * 240; i++) colourful |= cv.data[i * 3 + 1] > 64 || cv.data[i * 3 + 2] > 64;
+    CHECK(colourful);
+    CHECK(cv.night);  // the picker restores the night flag
+  }
   bool guard = true;
   for (int i = 0; i < 32; i++) guard &= buf[i] == 0xAB && buf[sizeof(buf) - 1 - i] == 0xAB;
   CHECK(guard);
@@ -121,7 +144,7 @@ int main() {
   test_time_helpers();
   test_versions();
   test_fold();
-  test_swatches();
+  test_color_wheel();
   test_render();
   if (failures) { printf("%d check(s) failed\n", failures); return 1; }
   printf("All helper tests passed\n");
