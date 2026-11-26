@@ -1,6 +1,6 @@
 # PixiZhi SpotPear
 
-**1.1.4 · ESPHome firmware and Home Assistant blueprints for the Spotpear Ball v2**
+**1.1.5 · ESPHome firmware and Home Assistant blueprints for the Spotpear Ball v2**
 
 A bold pixel interface for a small round desktop display: clock, home controls,
 music, thermostats, status, notifications, timer, and four quick actions.
@@ -18,8 +18,9 @@ red pixel colours; the physical brightness setting is not simulated.*
 - Up to six favourite light, switch, media-player, or thermostat controls.
   Larger category lists scroll vertically and show a V hint when more are below.
 - Touch controls and rim gestures for brightness, volume, and temperature.
-- Red night interface on every page, scheduled start/end times, and an independent
-  saved Night Mode Brightness. Schedules crossing midnight are supported.
+- Red night interface on every page (the colour wheel keeps its real colours),
+  scheduled start/end times, and an independent saved Night Mode Brightness.
+  Schedules crossing midnight are supported.
 - Pixel notifications, an adjustable kitchen timer, and a radial menu of up to
   eight Home Assistant actions (long-press the clock).
 - Sendspin playback with paired-server authentication and a six-digit pairing

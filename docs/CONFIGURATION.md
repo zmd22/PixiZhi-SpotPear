@@ -52,8 +52,9 @@ Night Mode Brightness is an independent saved 1–100% setting, initially 10%.
 Screen wake and urgent notifications respect it. Daytime brightness and standby
 dimming return when the schedule ends. The clock rim adjusts the night value
 while the schedule is active. All display colours become red/black, including
-picker and pairing controls. The separate notification LED keeps its configured
-colours/effects.
+the pairing controls. The colour wheel is the one exception: its LEDs keep their
+real colours so a colour can still be chosen (unavailable LEDs and the home icon
+stay red). The separate notification LED keeps its configured colours/effects.
 
 ## Gestures and feedback
 
@@ -125,7 +126,9 @@ devices only follow the latest full release.
 While an update installs, the screen shows its progress; media and the siren
 stop first. A new image has to run for two minutes before it is confirmed. If it
 crashes or resets before that, the bootloader returns to the previous firmware
-on its own. Write release notes in the GitHub release text: its first ~250
+on its own. A download that stalls for more than 60 seconds is abandoned and the
+old firmware kept (before 1.1.5 the limit was 10 seconds, which a busy network
+could exceed); simply install again. Write release notes in the GitHub release text: its first ~250
 characters appear in Home Assistant's update dialog.
 
 A release is a public build: anything in `pixizhi.yaml` is visible to everyone.

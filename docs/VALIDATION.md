@@ -4,9 +4,10 @@
 
 - Host tests (`tests/test_helpers.cpp`): notification storage round-trips and
   overflow, age labels, timer arithmetic, version comparison, text folding
-  (accents, quotes, dashes, unsupported scripts), colour-picker hit-testing, and
-  a render of every screen in day and night mode that checks for out-of-bounds
-  writes and that night frames contain no green or blue.
+  (accents, quotes, dashes, unsupported scripts), colour-wheel and white hit-testing
+  (including the free home icon), and a render of every screen in day and night
+  mode that checks for out-of-bounds writes and that night frames contain no green
+  or blue, except a usable colour wheel, which must keep its colours.
 - `tools/check_public.py`: no credentials, addresses or build artefacts.
 - `esphome config` against the pinned ESPHome commit.
 

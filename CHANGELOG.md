@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.1.5
+
+No blueprint changes: updating the firmware is enough.
 
 - Colour picker is now a colour wheel: hue around the ring, pale towards the
   middle and saturated at the rim, so any colour can be picked, not only 23

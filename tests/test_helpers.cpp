@@ -52,6 +52,7 @@ static void test_time_helpers() {
 
 static void test_versions() {
   CHECK(compare_versions("1.1.4", "1.1.3") == 1);
+  CHECK(compare_versions("1.1.5", "1.1.4") == 1);
   CHECK(compare_versions("0.9.9", "0.9.10") == -1);
   CHECK(compare_versions("v1.2", "1.2.0") == 0);
   CHECK(compare_versions("1.10", "1.9.9") == 1);
